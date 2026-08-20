@@ -1,0 +1,76 @@
+[project]
+name = "chatfolio-be"
+version = "0.1.0"
+description = "Chatfolio backend — AI-powered SaaS portfolio platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic[email]>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "redis>=5.2",
+    "arq>=0.26",
+    # Pinned, not floating: the chromadb PyPI client and the chromadb/chroma Docker image are
+    # versioned independently, and the server image is currently well behind the client's
+    # latest release (see docker-compose.yml's `chroma` service). >=0.5 resolved to 1.5.9 here
+    # and broke against the 1.4.4 server with a wire-protocol error. Bump both together.
+    "chromadb==1.4.1",
+    "aioboto3>=13.2",
+    "httpx>=0.27",
+    "passlib[argon2]>=1.7",
+    "pyjwt>=2.10",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "slowapi>=0.1.9",
+    "structlog>=24.4",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "polyfactory>=2.18",
+    "pre-commit>=4.0",
+    "types-passlib>=1.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chatfolio"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["aioboto3.*", "botocore.*", "chromadb.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pymupdf ships incomplete stubs (its own `open()` internally calls an untyped constructor).
+module = "chatfolio.cv_parsing.pdf_extractor"
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
