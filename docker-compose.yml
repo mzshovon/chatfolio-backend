@@ -54,10 +54,13 @@ services:
       - "6379:6379"
 
   chroma:
-    # Pinned to match the chromadb client version in pyproject.toml (see the comment there) —
-    # `:latest` here was 1.4.4 while the client's `>=0.5` floated to 1.5.9 and broke the wire
-    # protocol between them. Bump both together, deliberately, not independently.
-    image: chromadb/chroma:1.4.4
+    # Pinned by digest, not tag: chromadb/chroma publishes no per-version stable tags (only a
+    # moving `latest` and dev builds), so a tag can't guarantee reproducibility here — a digest
+    # can. This digest resolves to server 1.4.4, matching the `chromadb==1.4.1` client pin in
+    # pyproject.toml (see the comment there for why client/server drift broke the wire protocol
+    # between them). Bump both together, deliberately, not independently — re-pull `:latest`,
+    # confirm client compatibility, then update both pins to the new digest/version.
+    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
     ports:
       - "8004:8000"
     volumes:
