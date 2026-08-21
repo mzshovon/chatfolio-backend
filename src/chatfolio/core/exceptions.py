@@ -43,6 +43,11 @@ class ServiceUnavailableError(ChatfolioError):
     message = "This feature is temporarily unavailable. Please try again later."
 
 
+class TooManyRequestsError(ChatfolioError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    message = "You're sending messages too quickly. Please slow down."
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ChatfolioError)
     async def handle_chatfolio_error(_: Request, exc: ChatfolioError) -> JSONResponse:

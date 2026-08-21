@@ -17,7 +17,7 @@ from botocore.exceptions import ClientError  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 import chatfolio.models  # noqa: F401,E402 (registers all model modules on Base.metadata)
-from chatfolio.api.deps import get_vector_store  # noqa: E402
+from chatfolio.api.deps import get_embed_texts, get_vector_store  # noqa: E402
 from chatfolio.config.settings import get_settings  # noqa: E402
 from chatfolio.db.base import Base  # noqa: E402
 from chatfolio.db.session import get_engine  # noqa: E402
@@ -29,10 +29,12 @@ from tests.factories.fake_vectorstore import FakeVectorStore  # noqa: E402
 # (create/update on Experience/Project/Skill/Education, and PortfolioSection approve) only
 # push a job onto the queue and never execute it here (no worker runs during tests, same as
 # CV parsing — see test_jobs_cv.py). The only *synchronous* vector_store call in the request
-# path is EmbeddingService.delete_embed(), used on section edit/regenerate and child delete,
-# so a fake is enough for the whole suite; embed_content_job itself is tested directly with a
-# hand-built ctx, same pattern as parse_cv_job.
+# path is EmbeddingService.delete_embed() and RAGService.retrieve() (public chat), so a fake is
+# enough for the whole suite; embed_content_job itself is tested directly with a hand-built
+# ctx, same pattern as parse_cv_job. The real embedder also downloads an ~80MB ONNX model on
+# first use — never acceptable in a test suite regardless of the Chroma question.
 app.dependency_overrides[get_vector_store] = lambda: FakeVectorStore()
+app.dependency_overrides[get_embed_texts] = lambda: lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -108,8 +110,12 @@ async def _flush_test_redis_db() -> None:
     await pool.flushdb()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 async def _prepare_test_queue() -> AsyncGenerator[None]:
+    # Function-scoped, not session-scoped: slowapi's rate-limit counters live in this same
+    # Redis db, keyed by client IP — every test's ASGITransport client shares one IP, so a
+    # session-scoped flush would let rate-limit hits accumulate across unrelated tests and
+    # cause spurious 429s far away from whichever test actually earned them.
     await _flush_test_redis_db()
     yield
     await _flush_test_redis_db()

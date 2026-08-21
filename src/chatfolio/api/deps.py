@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 from typing import Annotated
 
 import jwt
@@ -18,6 +19,7 @@ from chatfolio.storage.base import StorageBackend
 from chatfolio.storage.s3_storage import S3StorageBackend
 from chatfolio.vectorstore.base import VectorStore
 from chatfolio.vectorstore.chroma_store import ChromaVectorStore
+from chatfolio.vectorstore.local_embedder import embed_texts
 from chatfolio.workers.queue import JobQueue, get_arq_pool
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -54,11 +56,29 @@ def get_llm_provider_factory(settings: SettingsDep) -> LLMFactory:
 LLMFactoryDep = Annotated[LLMFactory, Depends(get_llm_provider_factory)]
 
 
+_vector_store: VectorStore | None = None
+
+
 def get_vector_store(settings: SettingsDep) -> VectorStore:
-    return ChromaVectorStore(settings.vectorstore)
+    # Process-lifetime singleton, not one-per-request: a fresh instance means a fresh
+    # chromadb.AsyncHttpClient every single request, which was observed to intermittently fail
+    # against the live Chroma server under back-to-back requests (a bare script reusing one
+    # client never reproduced it). Matches the same lazy-singleton pattern already used for the
+    # DB engine (db/session.py) and the arq pool (workers/queue.py).
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = ChromaVectorStore(settings.vectorstore)
+    return _vector_store
 
 
 VectorStoreDep = Annotated[VectorStore, Depends(get_vector_store)]
+
+
+def get_embed_texts() -> Callable[[list[str]], list[list[float]]]:
+    return embed_texts
+
+
+EmbedTextsDep = Annotated[Callable[[list[str]], list[list[float]]], Depends(get_embed_texts)]
 
 
 async def get_current_user(

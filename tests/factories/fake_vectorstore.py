@@ -1,7 +1,11 @@
+from chatfolio.vectorstore.base import QueryMatch
+
+
 class FakeVectorStore:
-    def __init__(self) -> None:
+    def __init__(self, query_results: list[QueryMatch] | None = None) -> None:
         self.upserted: list[dict[str, object]] = []
         self.deleted_ids: list[str] = []
+        self.query_results = query_results or []
 
     async def upsert(
         self,
@@ -26,5 +30,5 @@ class FakeVectorStore:
         query_embedding: list[float],
         n_results: int = 5,
         where: dict[str, str] | None = None,
-    ) -> list[dict[str, object]]:
-        return []
+    ) -> list[QueryMatch]:
+        return self.query_results[:n_results]

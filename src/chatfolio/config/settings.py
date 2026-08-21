@@ -77,7 +77,9 @@ class StorageSettings(_Base):
 class SecuritySettings(_Base):
     model_config = SettingsConfigDict(env_prefix="SECURITY_", env_file=".env", extra="ignore")
 
-    jwt_secret: SecretStr = SecretStr("change-me-in-env")
+    # >=32 bytes so local/test runs don't trip PyJWT's InsecureKeyLengthWarning on every request —
+    # still an obvious placeholder. create_app() refuses to start with this value outside `local`.
+    jwt_secret: SecretStr = SecretStr("change-me-in-env-generate-a-real-random-secret-please")
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
