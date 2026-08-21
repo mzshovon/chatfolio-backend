@@ -1,0 +1,139 @@
+import uuid
+from typing import Any
+
+from sqlalchemy import Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from chatfolio.core.exceptions import NotFoundError, ValidationFailedError
+from chatfolio.models.audit_log import AdminAuditLog
+from chatfolio.models.chat import ChatMessage, ChatSession
+from chatfolio.models.chatfolio import PublicChatfolio
+from chatfolio.models.cv import CVStatus, UploadedCV
+from chatfolio.models.profile import CandidateProfile
+from chatfolio.models.user import User, UserRole
+from chatfolio.workers.queue import JobQueue
+
+DEFAULT_PAGE_SIZE = 20
+
+
+class AdminService:
+    """Unrestricted, cross-candidate reads/mutations for the admin surface — deliberately does
+    not go through the owner-scoped ProfileRepository/ProfileService helpers the candidate-facing
+    services use, since an admin is by definition not scoped to one profile. Every mutation here
+    writes an AdminAuditLog row (§6.11's moderation-readiness requirement).
+    """
+
+    def __init__(self, session: AsyncSession, job_queue: JobQueue) -> None:
+        self._session = session
+        self._job_queue = job_queue
+
+    async def list_users(
+        self, *, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0
+    ) -> list[User]:
+        result = await self._session.execute(
+            select(User).order_by(User.created_at.desc()).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+
+    async def list_chatfolios(
+        self, *, is_published: bool | None = None, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0
+    ) -> list[tuple[PublicChatfolio, str]]:
+        stmt = (
+            select(PublicChatfolio, User.email)
+            .join(CandidateProfile, CandidateProfile.id == PublicChatfolio.profile_id)
+            .join(User, User.id == CandidateProfile.user_id)
+        )
+        if is_published is not None:
+            stmt = stmt.where(PublicChatfolio.is_published.is_(is_published))
+        stmt = stmt.order_by(PublicChatfolio.created_at.desc()).limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return [(chatfolio, email) for chatfolio, email in result.all()]
+
+    async def list_failed_cv_jobs(
+        self, *, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0
+    ) -> list[tuple[UploadedCV, str]]:
+        stmt = (
+            select(UploadedCV, User.email)
+            .join(CandidateProfile, CandidateProfile.id == UploadedCV.profile_id)
+            .join(User, User.id == CandidateProfile.user_id)
+            .where(UploadedCV.status == CVStatus.FAILED)
+            .order_by(UploadedCV.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        return [(cv, email) for cv, email in result.all()]
+
+    async def retry_cv_job(self, admin: User, cv_id: uuid.UUID) -> tuple[UploadedCV, str]:
+        cv = await self._session.get(UploadedCV, cv_id)
+        if cv is None:
+            raise NotFoundError("CV job not found.")
+        if cv.status != CVStatus.FAILED:
+            raise ValidationFailedError("Only a failed upload can be retried.")
+
+        cv.status = CVStatus.PENDING
+        cv.error_message = None
+        await self._session.flush()
+        await self._job_queue.enqueue_job("parse_cv_job", str(cv.id))
+        await self._log(admin, "cv_job.retry", "uploaded_cv", str(cv.id))
+        return cv, await self._owner_email_for_profile(cv.profile_id)
+
+    async def unpublish_chatfolio(
+        self, admin: User, chatfolio_id: uuid.UUID
+    ) -> tuple[PublicChatfolio, str]:
+        chatfolio = await self._session.get(PublicChatfolio, chatfolio_id)
+        if chatfolio is None:
+            raise NotFoundError("Chatfolio not found.")
+
+        chatfolio.is_published = False
+        await self._session.flush()
+        await self._log(admin, "chatfolio.unpublish", "public_chatfolio", str(chatfolio.id))
+        return chatfolio, await self._owner_email_for_profile(chatfolio.profile_id)
+
+    async def _owner_email_for_profile(self, profile_id: uuid.UUID) -> str:
+        result = await self._session.execute(
+            select(User.email)
+            .join(CandidateProfile, CandidateProfile.user_id == User.id)
+            .where(CandidateProfile.id == profile_id)
+        )
+        return result.scalar_one()
+
+    async def get_metrics(self) -> dict[str, int]:
+        return {
+            "total_users": await self._count(select(func.count()).select_from(User)),
+            "total_candidates": await self._count(
+                select(func.count()).select_from(User).where(User.role == UserRole.CANDIDATE)
+            ),
+            "published_chatfolios": await self._count(
+                select(func.count())
+                .select_from(PublicChatfolio)
+                .where(PublicChatfolio.is_published.is_(True))
+            ),
+            "total_chat_sessions": await self._count(select(func.count()).select_from(ChatSession)),
+            "total_chat_messages": await self._count(select(func.count()).select_from(ChatMessage)),
+            "flagged_chat_sessions": await self._count(
+                select(func.count()).select_from(ChatSession).where(ChatSession.is_flagged.is_(True))
+            ),
+            "cv_parse_success_count": await self._count(
+                select(func.count())
+                .select_from(UploadedCV)
+                .where(UploadedCV.status == CVStatus.PARSED)
+            ),
+            "cv_parse_failed_count": await self._count(
+                select(func.count())
+                .select_from(UploadedCV)
+                .where(UploadedCV.status == CVStatus.FAILED)
+            ),
+        }
+
+    async def _count(self, stmt: Select[Any]) -> int:
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def _log(self, admin: User, action: str, target_type: str, target_id: str) -> None:
+        self._session.add(
+            AdminAuditLog(
+                admin_user_id=admin.id, action=action, target_type=target_type, target_id=target_id
+            )
+        )
+        await self._session.flush()

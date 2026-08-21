@@ -9,6 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from chatfolio.api.v1.admin import router as admin_router
 from chatfolio.api.v1.auth import router as auth_router
 from chatfolio.api.v1.cv import router as cv_router
 from chatfolio.api.v1.dashboard import router as dashboard_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(public_portfolio_router, prefix="/v1")
     app.include_router(public_chat_router, prefix="/v1")
     app.include_router(dashboard_router, prefix="/v1")
+    app.include_router(admin_router, prefix="/v1")
 
     return app
 
