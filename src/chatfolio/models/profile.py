@@ -31,6 +31,12 @@ class CandidateProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[ProfileStatus] = mapped_column(
         Enum(ProfileStatus, name="profile_status"), default=ProfileStatus.DRAFT
     )
+    # Phase-2 stub (§15) — no enforcement anywhere yet, `enable_billing` stays off. Living here
+    # rather than on `plan` gives a future limit check ("has this candidate sent too many chat
+    # messages this month") one place to look: `ChatService.send_message` already loads
+    # CandidateProfile every call, so no new query is needed to wire enforcement in later.
+    plan: Mapped[str] = mapped_column(String(50), default="free")
+    usage_limits: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
 
     experiences: Mapped[list["Experience"]] = relationship(
         back_populates="profile",

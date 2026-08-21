@@ -140,6 +140,17 @@ class FeatureFlags(_Base):
     enable_billing: bool = False
 
 
+class ObservabilitySettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="OBSERVABILITY_", env_file=".env", extra="ignore")
+
+    # None (the default) means Sentry stays off — no DSN, no network calls, no-op init. Same
+    # opt-in shape as everything else in this class: safe to leave unset in local/test, wired up
+    # by setting the env var in staging/production.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    metrics_enabled: bool = True
+
+
 class Settings(_Base):
     env: Environment = Environment.LOCAL
     database: DatabaseSettings = DatabaseSettings()
@@ -149,6 +160,7 @@ class Settings(_Base):
     vectorstore: VectorStoreSettings = VectorStoreSettings()
     llm: LLMSettings = LLMSettings()
     features: FeatureFlags = FeatureFlags()
+    observability: ObservabilitySettings = ObservabilitySettings()
 
 
 @lru_cache

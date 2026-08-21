@@ -5,6 +5,7 @@ from chatfolio.models import (  # noqa: F401
     chat,
     chatfolio,
     cv,
+    domain,
     embedding,
     portfolio_section,
     profile,

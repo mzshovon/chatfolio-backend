@@ -11,6 +11,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from chatfolio.api.v1.admin import router as admin_router
 from chatfolio.api.v1.auth import router as auth_router
+from chatfolio.api.v1.custom_domain import router as custom_domain_router
 from chatfolio.api.v1.cv import router as cv_router
 from chatfolio.api.v1.dashboard import router as dashboard_router
 from chatfolio.api.v1.health import router as health_router
@@ -20,9 +21,11 @@ from chatfolio.api.v1.public_chat import router as public_chat_router
 from chatfolio.api.v1.public_portfolio import router as public_portfolio_router
 from chatfolio.api.v1.sections import router as sections_router
 from chatfolio.config.logging import configure_logging
+from chatfolio.config.observability import configure_metrics, configure_sentry
 from chatfolio.config.settings import Environment, get_settings
 from chatfolio.core.exceptions import register_exception_handlers
 from chatfolio.core.rate_limit import limiter
+from chatfolio.core.security_headers import SecurityHeadersMiddleware
 from chatfolio.vectorstore.local_embedder import embed_texts
 
 _DEFAULT_JWT_SECRET = "change-me-in-env-generate-a-real-random-secret-please"
@@ -44,6 +47,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.env)
+    configure_sentry(settings.observability, settings.env)
 
     if (
         settings.env != Environment.LOCAL
@@ -56,6 +60,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Chatfolio API", version="0.1.0", lifespan=_lifespan)
 
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.security.cors_origins,
@@ -64,6 +69,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    configure_metrics(app, settings.observability)
     register_exception_handlers(app)
 
     async def handle_rate_limit_exceeded(request: Request, exc: Exception) -> Response:
@@ -80,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(cv_router, prefix="/v1")
     app.include_router(sections_router, prefix="/v1")
     app.include_router(portfolio_settings_router, prefix="/v1")
+    app.include_router(custom_domain_router, prefix="/v1")
     app.include_router(public_portfolio_router, prefix="/v1")
     app.include_router(public_chat_router, prefix="/v1")
     app.include_router(dashboard_router, prefix="/v1")
