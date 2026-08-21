@@ -25,7 +25,14 @@ class ChromaVectorStore:
 
     async def _get_collection(self, name: str) -> Any:
         client = await self._get_client()
-        return await client.get_or_create_collection(name=name)
+        # Chroma defaults new collections to squared-L2 distance, which is unbounded above 1 —
+        # RAGService.retrieve() computes similarity as `1 - distance` assuming cosine distance
+        # (bounded [0, 2]), so an L2 collection makes every similarity score wrong (often
+        # negative) and silently fails retrieval for real matches. Must be set at creation time;
+        # an existing collection's space can't be changed without deleting and recreating it.
+        return await client.get_or_create_collection(
+            name=name, metadata={"hnsw:space": "cosine"}
+        )
 
     async def upsert(
         self,

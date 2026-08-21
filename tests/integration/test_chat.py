@@ -57,7 +57,10 @@ def _set_vector_store(store: FakeVectorStore) -> None:
 
 
 def _clear_vector_store() -> None:
-    app.dependency_overrides.pop(get_vector_store, None)
+    # Restore conftest's default fake, not remove the override entirely — popping it left later
+    # tests (in this file and others) falling through to the real get_vector_store dependency,
+    # which hits an actual Chroma server with fixed-dimension fake embeddings and 400s.
+    app.dependency_overrides[get_vector_store] = lambda: FakeVectorStore()
 
 
 async def _fetch_messages(session_id: uuid.UUID) -> list[ChatMessage]:

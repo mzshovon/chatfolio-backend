@@ -12,10 +12,12 @@ class DeepSeekProvider:
         api_key: str,
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
+        timeout: float = 60.0,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url
+        self._timeout = timeout
 
     async def complete(
         self, *, system: str, messages: list[Message], json_mode: bool = False
@@ -27,7 +29,7 @@ class DeepSeekProvider:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=60.0) as client:
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
             response = await client.post(
                 "/chat/completions",
                 json=payload,

@@ -17,6 +17,8 @@ services:
       - minio
     volumes:
       - ./src:/app/src
+      - ./scripts:/app/scripts
+      - onnx_model_cache:/root/.cache/chroma
 
   worker:
     build: .
@@ -35,6 +37,8 @@ services:
       - minio
     volumes:
       - ./src:/app/src
+      - ./scripts:/app/scripts
+      - onnx_model_cache:/root/.cache/chroma
 
   postgres:
     image: postgres:16-alpine
@@ -82,3 +86,4 @@ volumes:
   postgres_data:
   chroma_data:
   minio_data:
+  onnx_model_cache:

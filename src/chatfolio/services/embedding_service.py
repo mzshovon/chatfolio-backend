@@ -1,13 +1,55 @@
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.models.embedding import VectorEmbedding
+from chatfolio.models.profile import Education, Experience, Project, Skill
 from chatfolio.vectorstore.base import VectorStore
 from chatfolio.workers.queue import JobQueue
 
 EMBEDDING_COLLECTION = "chatfolio_content"
+
+
+def experience_chunk_text(experience: Experience) -> str:
+    end = "present" if experience.is_current else (experience.end_date or "unknown end date")
+    period = f"{experience.start_date or '?'} to {end}"
+    description = experience.description or ""
+    return f"{experience.role} at {experience.company} ({period}): {description}"
+
+
+def project_chunk_text(project: Project) -> str:
+    tech = ", ".join(project.tech_stack)
+    return (
+        f"Project: {project.title}. {project.description or ''} "
+        f"Tech: {tech}. Impact: {project.impact or ''}"
+    )
+
+
+def skill_chunk_text(skill: Skill) -> str:
+    parts = [f"Skill: {skill.name}"]
+    if skill.category:
+        parts.append(f"category: {skill.category}")
+    if skill.proficiency:
+        parts.append(f"proficiency: {skill.proficiency}")
+    return ", ".join(parts)
+
+
+def education_chunk_text(education: Education) -> str:
+    return f"{education.degree or ''} in {education.field or ''} at {education.institution}"
+
+
+# path (used as embedding source_type) -> (model, chunk-text builder). Single source of truth
+# for "how do we turn a profile-owned row into embeddable text" — shared by the CRUD routes
+# (api/v1/profiles.py) and scripts/backfill_embeddings.py, so they can never drift apart.
+EMBEDDABLE_CHILD_TYPES: dict[str, tuple[type[Any], Callable[[Any], str]]] = {
+    "experience": (Experience, experience_chunk_text),
+    "projects": (Project, project_chunk_text),
+    "skills": (Skill, skill_chunk_text),
+    "education": (Education, education_chunk_text),
+}
 
 
 class EmbeddingService:

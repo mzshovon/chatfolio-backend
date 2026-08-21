@@ -66,3 +66,29 @@ async def test_register_login_me_refresh_logout() -> None:
             "/v1/auth/refresh", json={"refresh_token": new_tokens["refresh_token"]}
         )
         assert revoked_refresh_response.status_code == 401
+
+
+async def test_register_is_rate_limited() -> None:
+    async with await _client() as client:
+        responses = [
+            await client.post(
+                "/v1/auth/register",
+                json={"email": f"rate-limit-{i}@example.com", "password": "supersecret123"},
+            )
+            for i in range(6)
+        ]
+        assert [r.status_code for r in responses[:5]] == [201] * 5
+        assert responses[5].status_code == 429
+
+
+async def test_login_is_rate_limited() -> None:
+    async with await _client() as client:
+        responses = [
+            await client.post(
+                "/v1/auth/login",
+                json={"email": "nobody@example.com", "password": "wrong-password"},
+            )
+            for _ in range(11)
+        ]
+        assert all(r.status_code == 401 for r in responses[:10])
+        assert responses[10].status_code == 429

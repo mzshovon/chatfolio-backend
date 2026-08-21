@@ -1,0 +1,32 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
+from chatfolio.schemas.chat import ChatMessageResponse
+
+
+class RecruiterMetadataResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str | None
+    company: str | None
+    role: str | None
+    required_skills: str | None
+    experience_expectation: str | None
+    location_pref: str | None
+    timeline: str | None
+
+
+class ConversationSummaryResponse(BaseModel):
+    id: uuid.UUID
+    started_at: datetime
+    last_active_at: datetime | None
+    is_flagged: bool
+    reviewed_by_candidate: bool
+    message_count: int
+    recruiter_metadata: RecruiterMetadataResponse | None
+
+
+class ConversationDetailResponse(ConversationSummaryResponse):
+    messages: list[ChatMessageResponse]

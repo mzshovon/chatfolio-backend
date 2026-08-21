@@ -25,7 +25,13 @@ from chatfolio.schemas.profile import (
     SkillResponse,
     SkillUpdateRequest,
 )
-from chatfolio.services.embedding_service import EmbeddingService
+from chatfolio.services.embedding_service import (
+    EmbeddingService,
+    education_chunk_text,
+    experience_chunk_text,
+    project_chunk_text,
+    skill_chunk_text,
+)
 from chatfolio.services.profile_service import ProfileService
 
 router = APIRouter(prefix="/profiles/me")
@@ -144,34 +150,6 @@ def register_child_routes(  # noqa: UP047 (kept consistent with TypeVar style us
         await EmbeddingService(session, vector_store, job_queue).delete_embed(path, item_id)
 
 
-def _experience_chunk(experience: Experience) -> str:
-    end = "present" if experience.is_current else (experience.end_date or "unknown end date")
-    period = f"{experience.start_date or '?'} to {end}"
-    description = experience.description or ""
-    return f"{experience.role} at {experience.company} ({period}): {description}"
-
-
-def _project_chunk(project: Project) -> str:
-    tech = ", ".join(project.tech_stack)
-    return (
-        f"Project: {project.title}. {project.description or ''} "
-        f"Tech: {tech}. Impact: {project.impact or ''}"
-    )
-
-
-def _skill_chunk(skill: Skill) -> str:
-    parts = [f"Skill: {skill.name}"]
-    if skill.category:
-        parts.append(f"category: {skill.category}")
-    if skill.proficiency:
-        parts.append(f"proficiency: {skill.proficiency}")
-    return ", ".join(parts)
-
-
-def _education_chunk(education: Education) -> str:
-    return f"{education.degree or ''} in {education.field or ''} at {education.institution}"
-
-
 register_child_routes(
     path="experience",
     tag="experience",
@@ -179,7 +157,7 @@ register_child_routes(
     request_schema=ExperienceRequest,
     update_schema=ExperienceUpdateRequest,
     response_schema=ExperienceResponse,
-    chunk_text=_experience_chunk,
+    chunk_text=experience_chunk_text,
 )
 register_child_routes(
     path="projects",
@@ -188,7 +166,7 @@ register_child_routes(
     request_schema=ProjectRequest,
     update_schema=ProjectUpdateRequest,
     response_schema=ProjectResponse,
-    chunk_text=_project_chunk,
+    chunk_text=project_chunk_text,
 )
 register_child_routes(
     path="skills",
@@ -197,7 +175,7 @@ register_child_routes(
     request_schema=SkillRequest,
     update_schema=SkillUpdateRequest,
     response_schema=SkillResponse,
-    chunk_text=_skill_chunk,
+    chunk_text=skill_chunk_text,
 )
 register_child_routes(
     path="education",
@@ -206,5 +184,5 @@ register_child_routes(
     request_schema=EducationRequest,
     update_schema=EducationUpdateRequest,
     response_schema=EducationResponse,
-    chunk_text=_education_chunk,
+    chunk_text=education_chunk_text,
 )
