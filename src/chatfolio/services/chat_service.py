@@ -75,7 +75,13 @@ class ChatService:
         )
 
         assistant_message = ChatMessage(
-            session_id=chat_session.id, role=MessageRole.ASSISTANT, content=reply_text
+            session_id=chat_session.id,
+            role=MessageRole.ASSISTANT,
+            content=reply_text,
+            # Mirrors the recruiter message's classified intent onto the reply that's actually
+            # returned from this call — the frontend needs it here to key widget behavior off
+            # the turn it just got back, not the one it already knows it sent.
+            intent=intent.value,
         )
         self._session.add(assistant_message)
         chat_session.last_active_at = datetime.now(UTC)

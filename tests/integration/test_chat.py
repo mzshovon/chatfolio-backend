@@ -136,6 +136,9 @@ async def test_informational_intent_without_retrieval_skips_generation_and_falls
     body = response.json()
     assert "do not have that information" in body["content"]
     assert LLMTask.CHAT not in factory.calls
+    # Intent is classified before the guardrail decides whether to generate at all, so it must
+    # still be on the response even on the fallback path that skips the CHAT LLM call entirely.
+    assert body["intent"] == "skill_inquiry"
 
 
 async def test_informational_intent_with_retrieval_generates_grounded_reply(
@@ -226,7 +229,7 @@ async def test_messages_are_persisted_with_roles_and_intent(
     _set_llm_factory(factory)
     _set_vector_store(FakeVectorStore(query_results=[]))
     try:
-        await client.post(
+        response = await client.post(
             f"/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "How can I reach you?"},
         )
@@ -234,11 +237,17 @@ async def test_messages_are_persisted_with_roles_and_intent(
         _clear_llm_factory()
         _clear_vector_store()
 
+    # The response body is the assistant message — this is what the frontend actually receives
+    # from send_message, so the intent needs to be here, not just on the recruiter's own message
+    # it already knows it sent.
+    assert response.json()["intent"] == "contact_request"
+
     messages = await _fetch_messages(session_id)
     assert [m.role.value for m in messages] == ["recruiter", "assistant"]
     assert messages[0].content == "How can I reach you?"
     assert messages[0].intent == "contact_request"
     assert messages[1].content == "You can reach me by email."
+    assert messages[1].intent == "contact_request"
 
 
 async def test_recruiter_context_merges_first_mention_wins(

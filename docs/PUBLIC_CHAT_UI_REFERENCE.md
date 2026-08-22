@@ -137,10 +137,17 @@ show a generic "please try again in a moment" — don't retry automatically in a
 {
   "role": "assistant",
   "content": "I work primarily with PHP and TypeScript...",
-  "intent": null,          // always null on the assistant message; irrelevant to the UI
+  "intent": "skill_inquiry",   // the classified intent of the recruiter's message this reply answers
   "created_at": "2026-08-21T13:04:04.589723Z"
 }
 ```
+
+**`intent`** is always populated (never `null`) — classification runs on every message before anything
+else happens, including on the fallback path. Use it to key widget behavior (e.g. show a "skills"
+card, a "contact" CTA) off the turn that was just answered. One of: `skill_inquiry`,
+`project_inquiry`, `experience_inquiry`, `education_inquiry`, `role_fit_inquiry`,
+`availability_inquiry`, `contact_request`, `general_introduction`, or `unknown` (off-topic
+messages, or a rare classifier failure — treat it as "no specific intent detected," not an error).
 
 **Error responses to handle explicitly:**
 

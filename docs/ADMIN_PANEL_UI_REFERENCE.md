@@ -264,9 +264,11 @@ scrutiny, not necessarily anything actionable beyond awareness.
 ### `GET /v1/dashboard/conversations/{id}`
 
 Same shape plus `"messages": [{ "role": "recruiter"|"assistant", "content": "...", "intent":
-"skill_inquiry"|null, "created_at": "..." }]`, ordered oldest-first. `intent` is only ever set
-on `recruiter`-role messages (the classified intent of that message) — always `null` on
-`assistant` messages.
+"skill_inquiry"|"unknown", "created_at": "..." }]`, ordered oldest-first. `intent` is the
+classified intent of that turn's recruiter message, mirrored onto both the recruiter message and
+the assistant reply that answered it — so it's on every message, not just the recruiter one
+(older conversations recorded before 2026-08-22 may still show `null` on their assistant rows;
+only new messages carry it on both).
 
 ### `POST /v1/dashboard/conversations/{id}/mark-reviewed`
 
