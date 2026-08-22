@@ -73,6 +73,16 @@ async def test_upload_rejects_empty_file() -> None:
     assert response.status_code == 422
 
 
+async def test_upload_rejects_content_that_does_not_match_its_extension() -> None:
+    client, headers = await _authed_client()
+    response = await client.post(
+        "/v1/cv/upload",
+        headers=headers,
+        files={"file": ("resume.pdf", b"not actually a pdf", "application/pdf")},
+    )
+    assert response.status_code == 422
+
+
 async def test_get_status_and_retry_after_failure() -> None:
     client, headers = await _authed_client()
     upload_response = await client.post(

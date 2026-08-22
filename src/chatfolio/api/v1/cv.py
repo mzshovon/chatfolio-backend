@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 
 from chatfolio.api.deps import (
     CurrentUserDep,
@@ -9,6 +9,7 @@ from chatfolio.api.deps import (
     SettingsDep,
     StorageBackendDep,
 )
+from chatfolio.core.rate_limit import limiter
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.cv import CVResponse
 from chatfolio.services.cv_service import CVService
@@ -25,7 +26,9 @@ def _service(
 
 
 @router.post("/upload", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour")
 async def upload_cv(
+    request: Request,
     current_user: CurrentUserDep,
     session: DbSessionDep,
     storage: StorageBackendDep,
@@ -54,7 +57,9 @@ async def get_cv_status(
 
 
 @router.post("/{cv_id}/retry", response_model=CVResponse)
+@limiter.limit("10/hour")
 async def retry_cv(
+    request: Request,
     cv_id: uuid.UUID,
     current_user: CurrentUserDep,
     session: DbSessionDep,
