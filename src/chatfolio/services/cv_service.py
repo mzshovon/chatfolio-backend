@@ -15,6 +15,16 @@ ALLOWED_CV_CONTENT_TYPES = {
 }
 ALLOWED_CV_EXTENSIONS = set(ALLOWED_CV_CONTENT_TYPES.values())
 
+# `content_type` and the filename extension are both fully client-controlled — neither proves
+# what the bytes actually are. Checking the real file signature is a cheap, dependency-free
+# defense-in-depth layer against a mislabeled upload reaching pymupdf/python-docx as something
+# other than what they expect. `.docx` is OOXML (a zip), so it shares PK\x03\x04 with plain zip.
+_MAGIC_BYTES: dict[str, bytes] = {
+    ".pdf": b"%PDF-",
+    ".docx": b"PK\x03\x04",
+    ".doc": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+}
+
 
 class CVService:
     def __init__(
@@ -42,6 +52,10 @@ class CVService:
             raise ValidationFailedError(f"File exceeds the {limit}MB limit.")
         if len(content) == 0:
             raise ValidationFailedError("Uploaded file is empty.")
+        if not content.startswith(_MAGIC_BYTES[extension]):
+            raise ValidationFailedError(
+                "File content doesn't match its extension — upload a genuine PDF, DOC, or DOCX."
+            )
 
         profile = await self._profile_service.get_or_create_for_user(user)
         key = f"cvs/{profile.id}/{uuid.uuid4()}{extension}"

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from chatfolio.api.deps import (
     CurrentUserDep,
@@ -9,6 +9,7 @@ from chatfolio.api.deps import (
     LLMFactoryDep,
     VectorStoreDep,
 )
+from chatfolio.core.rate_limit import limiter
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.section import SectionResponse, SectionUpdateRequest
 from chatfolio.services.embedding_service import EmbeddingService
@@ -54,7 +55,9 @@ async def update_section(
 
 
 @router.post("/{section_id}/regenerate", response_model=SectionResponse)
+@limiter.limit("10/hour")
 async def regenerate_section(
+    request: Request,
     section_id: uuid.UUID,
     current_user: CurrentUserDep,
     session: DbSessionDep,
