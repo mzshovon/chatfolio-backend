@@ -1,18 +1,22 @@
 import asyncio
 from typing import Any
 
+import structlog
 from arq.connections import RedisSettings as ArqRedisSettings
 
 from chatfolio.config.settings import get_settings
 from chatfolio.db.session import get_sessionmaker
 from chatfolio.llm.factory import LLMProviderFactory
+from chatfolio.services.embedding_service import reconcile_missing_embeddings
 from chatfolio.storage.s3_storage import S3StorageBackend
 from chatfolio.vectorstore.chroma_store import ChromaVectorStore
 from chatfolio.vectorstore.local_embedder import embed_texts
 from chatfolio.workers.jobs_cv import parse_cv_job
 from chatfolio.workers.jobs_embedding import embed_content_job
+from chatfolio.workers.queue import get_arq_pool
 
 settings = get_settings()
+logger = structlog.get_logger(__name__)
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -31,6 +35,14 @@ async def startup(ctx: dict[str, Any]) -> None:
     # a dozen simultaneous progress bars fighting over the same bandwidth. One warm-up call
     # here means every real job call afterward just hits the on-disk cache.
     await asyncio.to_thread(embed_texts, ["warmup"])
+
+    # Self-healing check (2026-08-22): re-enqueue any embedding whose Chroma vector has gone
+    # missing while its Postgres pointer row is still there — see reconcile_missing_embeddings's
+    # docstring for why this is needed even after fixing the root cause that first triggered it.
+    pool = await get_arq_pool()
+    reconciled = await reconcile_missing_embeddings(ctx["sessionmaker"], ctx["vector_store"], pool)
+    if reconciled:
+        logger.warning("worker.startup_reconciled_embeddings", count=reconciled)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:

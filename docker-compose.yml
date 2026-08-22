@@ -68,7 +68,14 @@ services:
     ports:
       - "8004:8000"
     volumes:
-      - chroma_data:/chroma/chroma
+      # The server's own startup log states its persist path explicitly: `persist_path: "/data"`,
+      # `Saving data to: /data` — NOT /chroma/chroma, which this was mounted at for this entire
+      # project's history. That meant every write landed on the container's ephemeral layer, not
+      # this named volume, and every embedding was silently lost on any `docker compose down` +
+      # `up` cycle that recreated the chroma container (undetected until now because previous
+      # troubleshooting only ever restarted api/worker, never chroma itself, so the same
+      # long-lived container process kept its in-memory-since-boot data intact by accident).
+      - chroma_data:/data
 
   minio:
     image: minio/minio:latest

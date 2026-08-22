@@ -21,6 +21,8 @@ class VectorStore(Protocol):
 
     async def delete(self, *, collection: str, ids: list[str]) -> None: ...
 
+    async def list_ids(self, *, collection: str) -> list[str]: ...
+
     async def query(
         self,
         *,

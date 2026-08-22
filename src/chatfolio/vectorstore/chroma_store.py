@@ -50,6 +50,12 @@ class ChromaVectorStore:
         coll = await self._get_collection(collection)
         await coll.delete(ids=ids)
 
+    async def list_ids(self, *, collection: str) -> list[str]:
+        coll = await self._get_collection(collection)
+        result = await coll.get(include=[])
+        ids: list[str] = result.get("ids", [])
+        return ids
+
     async def query(
         self,
         *,
