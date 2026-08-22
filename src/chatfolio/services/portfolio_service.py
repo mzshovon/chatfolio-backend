@@ -4,10 +4,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.core.exceptions import ConflictError, ValidationFailedError
+from chatfolio.models.chat import ChatSession, RecruiterMetadata
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.mixins import ProfileChildMixin
@@ -168,3 +169,17 @@ class PublicPortfolioService:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def count_identified_recruiters(self, chatfolio_id: uuid.UUID) -> int:
+        """Recruiters who volunteered at least their name or company during chat — not every
+        session, most of which never mention either (RecruiterMetadata is best-effort and
+        optional per §6.8, so most rows are all-null)."""
+        result = await self._session.execute(
+            select(func.count(RecruiterMetadata.id))
+            .join(ChatSession, ChatSession.id == RecruiterMetadata.session_id)
+            .where(
+                ChatSession.chatfolio_id == chatfolio_id,
+                or_(RecruiterMetadata.name.is_not(None), RecruiterMetadata.company.is_not(None)),
+            )
+        )
+        return result.scalar_one()

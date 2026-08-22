@@ -47,6 +47,7 @@ async def get_public_chatfolio(
     projects = await service.list_children(Project, chatfolio.profile_id)
     skills = await service.list_children(Skill, chatfolio.profile_id)
     education = await service.list_children(Education, chatfolio.profile_id)
+    recruiter_count = await service.count_identified_recruiters(chatfolio.id)
 
     return PublicChatfolioResponse(
         slug=chatfolio.slug,
@@ -64,6 +65,7 @@ async def get_public_chatfolio(
         education=[EducationResponse.model_validate(e) for e in education],
         contact_cta_config=chatfolio.contact_cta_config,
         cv_downloadable=chatfolio.cv_downloadable,
+        recruiter_count=recruiter_count,
     )
 
 

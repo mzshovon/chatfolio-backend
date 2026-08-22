@@ -1,9 +1,13 @@
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import select
 
 from chatfolio.api.deps import get_llm_provider_factory
+from chatfolio.db.session import get_sessionmaker
 from chatfolio.main import app
+from chatfolio.models.chat import ChatSession, RecruiterMetadata
+from chatfolio.models.chatfolio import PublicChatfolio
 from tests.factories.fake_llm import FakeLLMFactory
 from tests.factories.publish_flow import authed_client, publish_full_profile
 
@@ -36,6 +40,7 @@ async def test_published_slug_returns_full_page(set_fake_llm: Callable[[str], No
     assert body["summary"] == "Generated content."
     assert len(body["experiences"]) == 1
     assert body["experiences"][0]["company"] == "Acme"
+    assert body["recruiter_count"] == 0
 
 
 async def test_draft_section_content_is_never_exposed_publicly(
@@ -56,6 +61,52 @@ async def test_draft_section_content_is_never_exposed_publicly(
     body = response.json()
     assert body["intro"] is None
     assert "unreviewed text" not in str(body)
+
+
+async def _add_session_with_metadata(
+    slug: str, *, name: str | None = None, company: str | None = None
+) -> None:
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(PublicChatfolio).where(PublicChatfolio.slug == slug)
+        )
+        chatfolio = result.scalar_one()
+
+        chat_session = ChatSession(chatfolio_id=chatfolio.id)
+        session.add(chat_session)
+        await session.flush()
+
+        session.add(RecruiterMetadata(session_id=chat_session.id, name=name, company=company))
+        await session.commit()
+
+
+async def _add_session_without_metadata(slug: str) -> None:
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(PublicChatfolio).where(PublicChatfolio.slug == slug)
+        )
+        chatfolio = result.scalar_one()
+        session.add(ChatSession(chatfolio_id=chatfolio.id))
+        await session.commit()
+
+
+async def test_recruiter_count_only_includes_sessions_with_name_or_company(
+    set_fake_llm: Callable[[str], None],
+) -> None:
+    client, _headers, slug = await publish_full_profile(
+        "public-recruiter-count-owner@example.com", set_fake_llm, "ada-public-5"
+    )
+
+    await _add_session_with_metadata(slug, name="Rafi")
+    await _add_session_with_metadata(slug, company="Cefalo")
+    await _add_session_with_metadata(slug)  # metadata row exists but both fields null
+    await _add_session_without_metadata(slug)  # no RecruiterMetadata row at all
+
+    response = await client.get(f"/v1/public/chatfolio/{slug}")
+    assert response.status_code == 200
+    assert response.json()["recruiter_count"] == 2
 
 
 async def test_unpublishing_makes_page_unavailable(set_fake_llm: Callable[[str], None]) -> None:

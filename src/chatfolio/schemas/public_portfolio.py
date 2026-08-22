@@ -24,3 +24,4 @@ class PublicChatfolioResponse(BaseModel):
     education: list[EducationResponse]
     contact_cta_config: dict[str, str]
     cv_downloadable: bool
+    recruiter_count: int

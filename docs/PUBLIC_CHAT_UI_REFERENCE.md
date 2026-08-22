@@ -83,7 +83,8 @@ Everything needed to render a candidate's public page in one call.
     }
   ],
   "contact_cta_config": { "label": "Get in touch", "url": "mailto:ada@example.com" },
-  "cv_downloadable": true
+  "cv_downloadable": true,
+  "recruiter_count": 6
 }
 ```
 
@@ -91,6 +92,12 @@ Everything needed to render a candidate's public page in one call.
 - `intro`/`summary` are `null` until the candidate has approved those sections — render the page
   gracefully without them (they're supplementary copy, not required fields).
 - `experiences`/`projects`/`education` arrays can be empty — never assume at least one entry.
+- `recruiter_count` is how many distinct chat sessions had a recruiter volunteer their name or
+  company at some point in the conversation — not a raw visit/session count. A recruiter who
+  chats without ever mentioning who they are doesn't count, since `RecruiterMetadata` capture is
+  best-effort and most sessions never populate it. Useful for a "N recruiters have reached out"
+  social-proof stat, but don't present it as total page views or total chat sessions — it's a
+  meaningfully smaller, more specific number than either.
 - Only **approved** content is ever returned here; there's no way to accidentally see a
   candidate's draft/unpublished edits through this endpoint.
 
