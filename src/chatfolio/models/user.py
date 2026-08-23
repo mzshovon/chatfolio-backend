@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,17 @@ class UserRole(StrEnum):
     ADMIN = "admin"
 
 
+class TwoFactorMethod(StrEnum):
+    EMAIL = "email"
+    PHONE = "phone"
+    BOTH = "both"
+
+
+class OtpPurpose(StrEnum):
+    TWO_FACTOR_ENROLL = "two_factor_enroll"
+    TWO_FACTOR_LOGIN = "two_factor_login"
+
+
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
@@ -24,6 +35,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Enum(UserRole, name="user_role"), default=UserRole.CANDIDATE
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    two_factor_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    two_factor_method: Mapped[TwoFactorMethod | None] = mapped_column(
+        Enum(TwoFactorMethod, name="two_factor_method"), nullable=True
+    )
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -43,3 +59,35 @@ class RefreshToken(UUIDPrimaryKeyMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     user: Mapped[User] = relationship(back_populates="refresh_tokens")
+
+
+class PasswordResetToken(UUIDPrimaryKeyMixin, Base):
+    """Single-use, opaque token emailed to a candidate as a reset-password link. Modeled after
+    RefreshToken (hash-only at rest, expiry, one-shot use)."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class OtpCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """6-digit codes for 2FA enrollment and 2FA login, delivered by email/SMS/both. `channel`
+    records where THIS code was actually sent (for the "both" method, one row exists per send
+    and the same code value is delivered on every channel)."""
+
+    __tablename__ = "otp_codes"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    purpose: Mapped[OtpPurpose] = mapped_column(Enum(OtpPurpose, name="otp_purpose"))
+    channel: Mapped[TwoFactorMethod] = mapped_column(Enum(TwoFactorMethod, name="otp_channel"))
+    code_hash: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)

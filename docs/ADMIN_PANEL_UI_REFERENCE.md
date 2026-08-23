@@ -47,10 +47,21 @@ unauthenticated recruiter-facing side. Full backend design: [`BACKEND_PLAN.md`](
 // Request
 { "email": "ada@example.com", "password": "supersecret123" }
 
-// 200 OK
-{ "access_token": "eyJ...", "refresh_token": "abc123...", "token_type": "bearer" }
+// 200 OK — account does NOT have 2FA enabled
+{ "requires_two_factor": false, "access_token": "eyJ...", "refresh_token": "abc123...", "token_type": "bearer" }
+
+// 200 OK — account HAS 2FA enabled: no tokens yet, a verification code was just sent
+{
+  "requires_two_factor": true,
+  "challenge_token": "eyJ...",
+  "method": "email",                          // "email" | "phone" | "both"
+  "masked_destinations": ["a•••@example.com"]  // 2 entries for "both"
+}
 ```
 `401` for wrong email/password (same message for both — don't build UI that distinguishes them).
+Branch the frontend on the `requires_two_factor` field, not on HTTP status — both shapes are
+`200`, since needing a second factor is a normal step in login, not an error. See §2.4 for the
+full 2FA verification flow.
 
 ### `POST /v1/auth/refresh` — 20/min per IP
 
@@ -118,6 +129,112 @@ expired, let me refresh" will race: one wins and gets a new pair, the other gets
 already-revoked token. Guard against this with a single in-flight refresh promise that all
 callers await (a standard "refresh mutex" pattern) rather than letting every failed request
 independently call `/auth/refresh`.
+
+### 2.4 Forgot / reset password
+
+Two calls, no login required for either.
+
+#### `POST /v1/auth/forgot-password` — 5/min per IP
+
+```jsonc
+// Request
+{ "email": "ada@example.com" }
+// 204 No Content — ALWAYS, whether or not that email is registered
+```
+This always returns `204` regardless of whether the email exists — the backend deliberately
+never reveals which emails are registered. Show the same generic "if an account exists, we've
+sent a reset link" message every time; don't build a UI path for "email not found" here.
+
+If the email is registered, this sends a real email with a link shaped like
+`{FRONTEND_BASE_URL}/reset-password?token=<opaque-token>` — build a page at that route that reads
+`token` from the query string and collects a new password (this is the "Set a new password"
+screen: new + confirm fields, submitted together to the endpoint below). The token expires in
+**30 minutes** and is single-use.
+
+#### `POST /v1/auth/reset-password` — 5/min per IP
+
+```jsonc
+// Request
+{ "token": "the-token-from-the-query-string", "new_password": "brandnewpass123" }  // 8-128 chars
+// 204 No Content
+```
+`401` if the token is invalid, expired, or already used — show "this reset link is no longer
+valid, request a new one" and route back to the forgot-password screen; don't try to distinguish
+"expired" from "already used" from "never existed" in the UI, the backend doesn't either.
+
+**Do the "new password" / "confirm password" match check client-side** — the API takes one
+`new_password` field, not two; there's no server-side confirm-field comparison to fall back on.
+
+A successful reset silently revokes every refresh token the account had outstanding (every other
+logged-in device/tab is signed out on its next `/auth/refresh` call). There's no separate
+"log out everywhere" action because this already is one.
+
+### 2.5 Two-factor authentication — enrollment (requires login)
+
+Enrolling is a two-step confirm flow: request a code, then prove you received it. All calls here
+need `Authorization` — this is an account-settings action, not part of the public login screen.
+
+#### `POST /v1/auth/2fa/setup` — 5/min per IP
+
+```jsonc
+// Request — method "email"
+{ "method": "email" }
+
+// Request — method "phone" (phone required the first time; omit it once one's on file)
+{ "method": "phone", "phone": "+15551234567" }
+
+// Request — method "both"
+{ "method": "both", "phone": "+15551234567" }
+
+// 200 OK
+{ "method": "email", "masked_destinations": ["a•••@example.com"] }
+```
+Sends a 6-digit code to the chosen channel(s) immediately (same code to both destinations for
+`"both"`) — 2FA is **not** enabled yet at this point, only pending. `422` if `method` is `"phone"`
+or `"both"` and no phone is on file and none was supplied in this call.
+
+#### `POST /v1/auth/2fa/verify-setup` — 10/min per IP
+
+```jsonc
+// Request
+{ "code": "123456" }
+// 204 No Content — 2FA is now enabled on the account
+```
+`401` for a wrong or expired code (10-minute expiry, 5 attempts before the code is dead and a new
+`/2fa/setup` call is required). Once this succeeds, every future `/auth/login` for this account
+returns the challenge shape from §2.3 instead of tokens directly.
+
+There's no "disable 2FA" or "change method" endpoint yet — re-running `/2fa/setup` with a
+different method mid-session is not currently supported; treat 2FA as set-once for now and note
+this as a gap if the UI needs to offer turning it off.
+
+### 2.6 Two-factor authentication — login verification (no login required)
+
+This is the second step after a `/auth/login` call returned `requires_two_factor: true` (§2.3).
+
+#### `POST /v1/auth/2fa/login/verify` — 10/min per IP
+
+```jsonc
+// Request
+{ "challenge_token": "eyJ...", "code": "123456" }
+// 200 OK
+{ "requires_two_factor": false, "access_token": "eyJ...", "refresh_token": "abc123...", "token_type": "bearer" }
+```
+`401` for a wrong code, an expired code (10 min), or an expired challenge token (**5 minutes** —
+noticeably shorter than the OTP itself, since this token only bridges "password already
+verified" to "OTP verified"; if a user stalls on the code-entry screen past 5 minutes, send them
+back to `/auth/login` to start over rather than trying to resend against a dead challenge).
+
+#### `POST /v1/auth/2fa/login/resend` — 3/min per IP
+
+```jsonc
+// Request
+{ "challenge_token": "eyJ..." }
+// 204 No Content — the previous code is now dead; only the new one works
+```
+Use this for the code screen's "Didn't get a code? Resend" link. Resending invalidates whatever
+code was sent before it, so a stale "verify" call using the old code after a resend correctly
+gets `401` — don't treat that as a bug if you see it while testing.
 
 ---
 
@@ -460,6 +577,10 @@ custom-domain redirect. Treat the whole feature as backend-scaffolding-only for 
 | `POST /auth/register` | 5/min per IP |
 | `POST /auth/login` | 10/min per IP |
 | `POST /auth/refresh`, `POST /auth/logout` | 20/min per IP |
+| `POST /auth/forgot-password`, `POST /auth/reset-password` | 5/min per IP |
+| `POST /auth/2fa/setup` | 5/min per IP |
+| `POST /auth/2fa/verify-setup`, `POST /auth/2fa/login/verify` | 10/min per IP |
+| `POST /auth/2fa/login/resend` | 3/min per IP |
 | `POST /cv/upload`, `POST /cv/{id}/retry` | 10/hour per IP |
 | `POST /sections/{id}/regenerate` | 10/hour per IP |
 | Everything else under this doc | no explicit limit (still bounded by needing a valid token) |

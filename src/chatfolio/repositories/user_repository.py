@@ -1,9 +1,9 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from chatfolio.models.user import RefreshToken, User
+from chatfolio.models.user import OtpCode, OtpPurpose, PasswordResetToken, RefreshToken, User
 from chatfolio.repositories.base import BaseRepository
 
 
@@ -34,3 +34,44 @@ class UserRepository(BaseRepository):
     async def revoke_refresh_token(self, token: RefreshToken) -> None:
         token.revoked_at = datetime.now(UTC)
         await self.session.flush()
+
+    async def revoke_all_refresh_tokens_for_user(self, user_id: uuid.UUID) -> None:
+        await self.session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        await self.session.flush()
+
+    async def add_password_reset_token(self, token: PasswordResetToken) -> PasswordResetToken:
+        self.session.add(token)
+        await self.session.flush()
+        return token
+
+    async def get_password_reset_token_by_hash(
+        self, token_hash: str
+    ) -> PasswordResetToken | None:
+        result = await self.session.execute(
+            select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+    async def add_otp_code(self, otp: OtpCode) -> OtpCode:
+        self.session.add(otp)
+        await self.session.flush()
+        return otp
+
+    async def get_latest_active_otp(
+        self, user_id: uuid.UUID, purpose: OtpPurpose
+    ) -> OtpCode | None:
+        result = await self.session.execute(
+            select(OtpCode)
+            .where(
+                OtpCode.user_id == user_id,
+                OtpCode.purpose == purpose,
+                OtpCode.consumed_at.is_(None),
+            )
+            .order_by(OtpCode.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

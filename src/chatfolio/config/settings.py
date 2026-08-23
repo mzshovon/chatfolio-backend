@@ -84,6 +84,42 @@ class SecuritySettings(_Base):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
     cors_origins: list[str] = ["http://localhost:3000"]
+    password_reset_token_ttl_minutes: int = 30
+    two_factor_challenge_ttl_minutes: int = 5
+    otp_ttl_minutes: int = 10
+    otp_max_attempts: int = 5
+
+
+class AppSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="APP_", env_file=".env", extra="ignore")
+
+    # Used only to build links in outbound emails (e.g. the reset-password link) — the backend
+    # never redirects here itself.
+    frontend_base_url: str = "http://localhost:3000"
+
+
+class EmailSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="EMAIL_", env_file=".env", extra="ignore")
+
+    # smtp_host left unset by default: EmailSender logs-and-skips instead of sending when unset,
+    # so local dev/tests never need a real mailbox. Set every SMTP_* var to actually deliver mail.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_use_tls: bool = True
+    from_address: str = "no-reply@chatfolio.example.com"
+
+
+class SmsSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="SMS_", env_file=".env", extra="ignore")
+
+    # api_url left unset by default, same log-and-skip behavior as EmailSettings above. Adapter
+    # POSTs {"to": ..., "message": ..., "sender_id": ...} as JSON with a bearer api_key — adjust
+    # notifications/sms_vendor.py if your vendor's contract differs.
+    api_url: str | None = None
+    api_key: SecretStr | None = None
+    sender_id: str | None = None
 
 
 class VectorStoreSettings(_Base):
@@ -161,6 +197,9 @@ class Settings(_Base):
     llm: LLMSettings = LLMSettings()
     features: FeatureFlags = FeatureFlags()
     observability: ObservabilitySettings = ObservabilitySettings()
+    app: AppSettings = AppSettings()
+    email: EmailSettings = EmailSettings()
+    sms: SmsSettings = SmsSettings()
 
 
 @lru_cache

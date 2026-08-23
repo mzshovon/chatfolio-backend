@@ -17,12 +17,18 @@ from botocore.exceptions import ClientError  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 import chatfolio.models  # noqa: F401,E402 (registers all model modules on Base.metadata)
-from chatfolio.api.deps import get_embed_texts, get_vector_store  # noqa: E402
+from chatfolio.api.deps import (  # noqa: E402
+    get_email_sender,
+    get_embed_texts,
+    get_sms_sender,
+    get_vector_store,
+)
 from chatfolio.config.settings import get_settings  # noqa: E402
 from chatfolio.db.base import Base  # noqa: E402
 from chatfolio.db.session import get_engine  # noqa: E402
 from chatfolio.main import app  # noqa: E402
 from chatfolio.workers.queue import get_arq_pool  # noqa: E402
+from tests.factories.fake_notifications import FakeEmailSender, FakeSmsSender  # noqa: E402
 from tests.factories.fake_vectorstore import FakeVectorStore  # noqa: E402
 
 # No test needs a real Chroma connection or the local embedding model: enqueue-only paths
@@ -35,6 +41,20 @@ from tests.factories.fake_vectorstore import FakeVectorStore  # noqa: E402
 # first use — never acceptable in a test suite regardless of the Chroma question.
 app.dependency_overrides[get_vector_store] = lambda: FakeVectorStore()
 app.dependency_overrides[get_embed_texts] = lambda: lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+
+# Real SMTP/SMS sending is never acceptable in a test suite. One process-lifetime fake per
+# channel (matches the vector-store pattern above); `.sent` is cleared per-test below so tests
+# don't see leftover messages from previous tests.
+fake_email_sender = FakeEmailSender()
+fake_sms_sender = FakeSmsSender()
+app.dependency_overrides[get_email_sender] = lambda: fake_email_sender
+app.dependency_overrides[get_sms_sender] = lambda: fake_sms_sender
+
+
+@pytest.fixture(autouse=True)
+def _clean_notifications() -> None:
+    fake_email_sender.sent.clear()
+    fake_sms_sender.sent.clear()
 
 
 @pytest.fixture(scope="session", autouse=True)

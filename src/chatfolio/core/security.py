@@ -24,6 +24,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 class TokenType(StrEnum):
     ACCESS = "access"
+    TWO_FACTOR_CHALLENGE = "2fa_challenge"
 
 
 def create_access_token(*, user_id: uuid.UUID, role: UserRole, settings: SecuritySettings) -> str:
@@ -45,10 +46,41 @@ def decode_access_token(token: str, settings: SecuritySettings) -> dict[str, Any
     )
 
 
-def generate_refresh_token() -> str:
-    """Opaque random token handed to the client; only its hash is persisted."""
+# Deliberately short-lived (see SecuritySettings.two_factor_challenge_ttl_minutes): this token
+# only proves "password already checked out for this user" between the login call and the
+# follow-up OTP verification, so a 5-minute default window is plenty and keeps a leaked/logged
+# challenge token from being useful for long.
+def create_two_factor_challenge_token(*, user_id: uuid.UUID, settings: SecuritySettings) -> str:
+    now = datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "type": TokenType.TWO_FACTOR_CHALLENGE.value,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.two_factor_challenge_ttl_minutes),
+    }
+    secret = settings.jwt_secret.get_secret_value()
+    return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_two_factor_challenge_token(token: str, settings: SecuritySettings) -> uuid.UUID:
+    payload = jwt.decode(
+        token, settings.jwt_secret.get_secret_value(), algorithms=[settings.jwt_algorithm]
+    )
+    if payload.get("type") != TokenType.TWO_FACTOR_CHALLENGE.value:
+        raise jwt.InvalidTokenError("Not a two-factor challenge token.")
+    return uuid.UUID(payload["sub"])
+
+
+def generate_opaque_token() -> str:
+    """Opaque random secret handed to the client (refresh token, password reset link); only its
+    hash is ever persisted."""
     return secrets.token_urlsafe(48)
 
 
-def hash_refresh_token(token: str) -> str:
+def hash_opaque_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def generate_otp_code() -> str:
+    """6-digit numeric code for email/SMS delivery — short enough to type from a phone screen."""
+    return f"{secrets.randbelow(1_000_000):06d}"

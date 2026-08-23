@@ -14,6 +14,9 @@ from chatfolio.db.session import get_db_session
 from chatfolio.llm.base import LLMFactory
 from chatfolio.llm.factory import LLMProviderFactory
 from chatfolio.models.user import User, UserRole
+from chatfolio.notifications.base import EmailSender, SmsSender
+from chatfolio.notifications.sms_vendor import VendorSmsSender
+from chatfolio.notifications.smtp_email import SmtpEmailSender
 from chatfolio.repositories.user_repository import UserRepository
 from chatfolio.storage.base import StorageBackend
 from chatfolio.storage.s3_storage import S3StorageBackend
@@ -33,6 +36,20 @@ def get_user_repository(session: DbSessionDep) -> UserRepository:
 
 
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+
+
+def get_email_sender(settings: SettingsDep) -> EmailSender:
+    return SmtpEmailSender(settings.email)
+
+
+EmailSenderDep = Annotated[EmailSender, Depends(get_email_sender)]
+
+
+def get_sms_sender(settings: SettingsDep) -> SmsSender:
+    return VendorSmsSender(settings.sms)
+
+
+SmsSenderDep = Annotated[SmsSender, Depends(get_sms_sender)]
 
 
 def get_storage_backend(settings: SettingsDep) -> StorageBackend:
