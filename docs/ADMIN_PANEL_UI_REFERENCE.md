@@ -142,10 +142,14 @@ doesn't exist yet.
 
 ### Child resources: Experience / Project / Skill / Education
 
-Same CRUD shape for all four, under `/v1/profiles/me/{experience|projects|skills|education}`:
+Same CRUD shape for all four, under `/v1/profiles/me/{experience|projects|skills|education}`.
+**There is no single-item GET** — only list, create, update, delete. Fetch the full list and find
+the item client-side if you need to re-read one after a list is already loaded; don't build a UI
+flow that assumes a per-item fetch exists.
 
+- `GET /v1/profiles/me/experience` → `200`, full array for the current user (no pagination — the
+  expected cardinality per candidate is small, tens at most)
 - `POST /v1/profiles/me/experience` → `201`, body per-type (see table below)
-- `GET /v1/profiles/me/experience/{id}` → `200` or `404`
 - `PATCH /v1/profiles/me/experience/{id}` → `200`, all fields optional
 - `DELETE /v1/profiles/me/experience/{id}` → `204`
 
@@ -155,6 +159,67 @@ Same CRUD shape for all four, under `/v1/profiles/me/{experience|projects|skills
 | `projects` | `title` (str, required), `description` (str, nullable), `tech_stack` (`string[]`, default `[]`), `impact` (str, nullable), `links` (`{[key: string]: string}`, default `{}`) |
 | `skills` | `name` (str, required), `category` (str, nullable), `proficiency` (str, nullable — free text, e.g. "Excellent"/"Interim", not an enum) |
 | `education` | `institution` (str, required), `degree`/`field` (str, nullable), `start_date`/`end_date` (ISO date, nullable) |
+
+**Response samples** — every response echoes the request body plus a server-assigned `id`;
+`PATCH` returns the same shape with only the fields you sent updated (send only what changed,
+same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
+
+```jsonc
+// POST /v1/profiles/me/experience
+// Request
+{ "company": "Acme", "role": "Backend Engineer", "start_date": "2022-08-23", "end_date": null,
+  "is_current": true, "description": "Leading backend platform work." }
+
+// 201 Created
+{ "company": "Acme", "role": "Backend Engineer", "start_date": "2022-08-23",
+  "end_date": null, "is_current": true, "description": "Leading backend platform work.",
+  "id": "uuid" }
+```
+
+```jsonc
+// POST /v1/profiles/me/projects
+// Request
+{ "title": "CFL", "description": "Closed feedback loop system automating survey processes.",
+  "tech_stack": ["Laravel", "PHP", "MySQL", "ReactJS"], "impact": "20M+ BDT annually",
+  "links": { "repo": "https://github.com/..." } }
+
+// 201 Created
+{ "title": "CFL", "description": "Closed feedback loop system automating survey processes.",
+  "tech_stack": ["Laravel", "PHP", "MySQL", "ReactJS"], "impact": "20M+ BDT annually",
+  "links": { "repo": "https://github.com/..." }, "id": "uuid" }
+```
+
+```jsonc
+// POST /v1/profiles/me/skills
+// Request
+{ "name": "PHP", "category": "Language", "proficiency": "Best" }
+
+// 201 Created
+{ "name": "PHP", "category": "Language", "proficiency": "Best", "id": "uuid" }
+```
+
+```jsonc
+// POST /v1/profiles/me/education
+// Request
+{ "institution": "University of Dhaka", "degree": "BSc", "field": "Computer Science",
+  "start_date": "2016-09-01", "end_date": "2020-06-01" }
+
+// 201 Created
+{ "institution": "University of Dhaka", "degree": "BSc", "field": "Computer Science",
+  "start_date": "2016-09-01", "end_date": "2020-06-01", "id": "uuid" }
+```
+
+```jsonc
+// PATCH /v1/profiles/me/skills/{id} — every field optional, send only what changed
+// Request
+{ "proficiency": "Excellent" }
+
+// 200 OK — unchanged fields keep their existing values, not reset to defaults
+{ "name": "PHP", "category": "Language", "proficiency": "Excellent", "id": "uuid" }
+```
+
+`GET /v1/profiles/me/{path}` (the list endpoint) returns a plain array of the same per-type shape
+shown above — `[{ ...experience }, { ...experience }]`, no wrapper object, no pagination metadata.
 
 **Every create/update/delete on these four types silently triggers a background re-embed** of
 that item for chat retrieval (§1 of the public chat doc) — no action needed from the UI, just be
@@ -215,28 +280,81 @@ don't exist yet on first call (so the very first call after profile setup may ta
 
 ## 6. Portfolio settings & publish
 
-All under `/v1/portfolio-settings`, auto-creates on first access (same lazy pattern as §3).
+All under `/v1/portfolio-settings`, auto-creates on first access (same lazy pattern as §3). A
+freshly auto-created record (no profile name or slug chosen yet) looks like this — `slug`
+defaults to `candidate-<random>`, `contact_cta_config` defaults to `{}`, not a pre-filled example:
 
 ```jsonc
-// GET / PATCH  — PATCH fields all optional
-{ "slug": "ada-lovelace", "subdomain": "ada-lovelace.chatfolio.com",
+// GET /v1/portfolio-settings
+{ "slug": "candidate-f391c9", "subdomain": "candidate-f391c9.chatfolio.com",
   "previous_slug": null, "is_published": false, "published_at": null,
-  "contact_cta_config": { "label": "Get in touch", "url": "mailto:..." },
-  "cv_downloadable": true }
+  "contact_cta_config": {}, "cv_downloadable": true }
 ```
 
 `slug` pattern: lowercase letters/digits/hyphens, 3-63 chars, can't start/end with a hyphen
 (`^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$`) — validate client-side before submit for a good error
 UX; the backend also enforces it (`422`) and uniqueness (`409` if taken).
 
-- `POST /v1/portfolio-settings/publish` — **preconditions, both required or `422` with a
-  combined message**: `full_name` must be set on the profile, and both sections must be
-  `approved`. Surface this as a checklist in the UI (e.g. "2 of 2 sections approved ✓ / name set
-  ✓") rather than only showing the error after a failed publish attempt.
-- `POST /v1/portfolio-settings/unpublish` — always succeeds, takes the page down immediately.
-- Renaming the slug after publishing keeps the **old** slug working as a `307` redirect (see the
-  public chat doc §2) — worth mentioning in the UI ("your old link will keep working") so
-  candidates aren't afraid to rename.
+```jsonc
+// PATCH /v1/portfolio-settings — every field optional, send only what changed
+// Request
+{ "slug": "portfolio-doc-test",
+  "contact_cta_config": { "label": "Get in touch", "url": "mailto:test@example.com" } }
+
+// 200 OK
+{ "slug": "portfolio-doc-test", "subdomain": "portfolio-doc-test.chatfolio.com",
+  "previous_slug": "candidate-f391c9", "is_published": false, "published_at": null,
+  "contact_cta_config": { "label": "Get in touch", "url": "mailto:test@example.com" },
+  "cv_downloadable": true }
+```
+
+Note `previous_slug` picks up the slug you just replaced automatically — you never send it
+yourself, and it's what powers the "old link keeps working" redirect below.
+
+### `POST /v1/portfolio-settings/publish`
+
+**Preconditions, both required or `422` with a combined message covering everything missing at
+once** (verified live — don't assume it stops at the first failure):
+
+```jsonc
+// 422 — nothing set yet
+{ "detail": "Approve these sections before publishing: intro, summary. Add your full name before publishing." }
+
+// 422 — name is set, sections still aren't approved
+{ "detail": "Approve these sections before publishing: intro, summary." }
+```
+
+Surface this as a checklist in the UI ("2 of 2 sections approved ✓ / name set ✓") rather than
+only showing the error after a failed publish attempt. Once both preconditions are met:
+
+```jsonc
+// 200 OK
+{ "slug": "portfolio-doc-test", "subdomain": "portfolio-doc-test.chatfolio.com",
+  "previous_slug": "candidate-f391c9", "is_published": true,
+  "published_at": "2026-08-22T23:59:30.428571Z",
+  "contact_cta_config": { "label": "Get in touch", "url": "mailto:test@example.com" },
+  "cv_downloadable": true }
+```
+
+### `POST /v1/portfolio-settings/unpublish`
+
+Always succeeds, takes the page down immediately (`is_published: false`). **`published_at` is
+*not* cleared** — it keeps the timestamp of the last publish rather than resetting to `null`, so
+don't use `published_at == null` as your "is/was this ever published" check; use `is_published`
+for current state and treat `published_at` as "last published at," full stop:
+
+```jsonc
+// 200 OK
+{ "slug": "portfolio-doc-test", "subdomain": "portfolio-doc-test.chatfolio.com",
+  "previous_slug": "candidate-f391c9", "is_published": false,
+  "published_at": "2026-08-22T23:59:30.428571Z",
+  "contact_cta_config": { "label": "Get in touch", "url": "mailto:test@example.com" },
+  "cv_downloadable": true }
+```
+
+Renaming the slug after publishing keeps the **old** slug working as a `307` redirect (see the
+public chat doc §2) — worth mentioning in the UI ("your old link will keep working") so
+candidates aren't afraid to rename.
 
 ---
 
