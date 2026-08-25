@@ -496,6 +496,11 @@ Read-only views of chats recruiters have had, under `/v1/dashboard`.
 messages) — worth a visual badge so the candidate knows to treat that transcript with more
 scrutiny, not necessarily anything actionable beyond awareness.
 
+Only sessions where at least one message was actually sent are listed — a recruiter who opens
+the chat widget (which creates a session, see `PUBLIC_CHAT_UI_REFERENCE.md` §3) but never types
+anything never shows up here, so `message_count` is never `0` in this list. Don't build UI for an
+"empty conversation" state; it can't happen.
+
 ### `GET /v1/dashboard/conversations/{id}`
 
 Same shape plus `"messages": [{ "role": "recruiter"|"assistant", "content": "...", "intent":

@@ -30,6 +30,7 @@ class DashboardService:
             select(ChatSession)
             .options(selectinload(ChatSession.recruiter_metadata))
             .where(ChatSession.chatfolio_id == chatfolio.id)
+            .where(ChatSession.messages.any())
             .order_by(ChatSession.started_at.desc())
             .limit(limit)
             .offset(offset)

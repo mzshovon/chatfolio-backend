@@ -493,6 +493,22 @@ Each phase should ship with tests before moving to the next — no phase depends
 
 ## 16. Changelog
 
+- **2026-08-25** — Fixed `GET /dashboard/conversations` (`DashboardService.list_conversations`)
+  listing every session for a chatfolio, including ones where a recruiter opened the chat widget
+  (creating a `ChatSession`) but never actually sent a message — clutter with no content behind
+  it. The in-progress filter attempting to fix this, `.where(ChatSession.messages.count() > 0)`,
+  wasn't valid SQLAlchemy at all (`.count()` isn't a thing on a relationship attribute used this
+  way) and would have raised at request time rather than just filtering wrong. Replaced with
+  `.where(ChatSession.messages.any())`, which SQLAlchemy compiles to a real `EXISTS` subquery —
+  exactly "has at least one message," and pairs correctly with the existing `_with_message_counts`
+  helper and the `limit`/`offset` pagination, which now apply after the empty sessions are
+  excluded rather than before. Verified live: created a session via
+  `POST /public/chat/{slug}/sessions` with no follow-up message — `GET /dashboard/conversations`
+  now correctly returns `[]` for it, while a session that did get a message still returns with
+  the correct `message_count`. Added `test_list_conversations_excludes_sessions_with_no_messages`;
+  full suite (101 tests) plus `ruff`/`mypy` clean. `ADMIN_PANEL_UI_REFERENCE.md` §7 updated to
+  state this guarantee explicitly (`message_count` is never `0` in this list).
+
 - **2026-08-23** — Built three previously-nonexistent auth journeys, requested to match a
   frontend design reference (forgot/reset password, email-or-phone-or-both 2FA): forgot-password
   email → reset-password link, and 2FA enrollment + login-challenge verification. None of this

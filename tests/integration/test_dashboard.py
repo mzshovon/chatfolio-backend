@@ -60,6 +60,23 @@ async def test_list_conversations_returns_owned_session_with_message_count(
     assert conversations[0]["recruiter_metadata"]["company"] == "Acme Corp"
 
 
+async def test_list_conversations_excludes_sessions_with_no_messages(
+    set_fake_llm: Callable[[str], None],
+) -> None:
+    _, owner_headers, slug = await publish_full_profile(
+        "dash-empty-owner@example.com", set_fake_llm, "dash-empty"
+    )
+    recruiter_client, _ = await authed_client("dash-empty-recruiter@example.com")
+    # Recruiter opens the chat widget (creates a session) but never actually sends a message.
+    await recruiter_client.post(f"/v1/public/chat/{slug}/sessions")
+
+    owner_client, _ = await authed_client("dash-empty-owner@example.com")
+    response = await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 async def test_get_conversation_returns_full_message_history(
     set_fake_llm: Callable[[str], None],
 ) -> None:
