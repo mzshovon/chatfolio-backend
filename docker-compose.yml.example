@@ -1,0 +1,96 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_HOST: redis
+      VECTORSTORE_HOST: chroma
+      VECTORSTORE_PORT: 8000
+      STORAGE_ENDPOINT_URL: http://minio:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+      - chroma
+      - minio
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - onnx_model_cache:/root/.cache/chroma
+
+  worker:
+    build: .
+    command: ["arq", "chatfolio.workers.worker.WorkerSettings"]
+    env_file: .env
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_HOST: redis
+      VECTORSTORE_HOST: chroma
+      VECTORSTORE_PORT: 8000
+      STORAGE_ENDPOINT_URL: http://minio:9000
+    depends_on:
+      - postgres
+      - redis
+      - chroma
+      - minio
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - onnx_model_cache:/root/.cache/chroma
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatfolio
+      POSTGRES_PASSWORD: chatfolio
+      POSTGRES_DB: chatfolio
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  chroma:
+    # Pinned by digest, not tag: chromadb/chroma publishes no per-version stable tags (only a
+    # moving `latest` and dev builds), so a tag can't guarantee reproducibility here — a digest
+    # can. This digest resolves to server 1.4.4, matching the `chromadb==1.4.1` client pin in
+    # pyproject.toml (see the comment there for why client/server drift broke the wire protocol
+    # between them). Bump both together, deliberately, not independently — re-pull `:latest`,
+    # confirm client compatibility, then update both pins to the new digest/version.
+    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    ports:
+      - "8004:8000"
+    volumes:
+      # The server's own startup log states its persist path explicitly: `persist_path: "/data"`,
+      # `Saving data to: /data` — NOT /chroma/chroma, which this was mounted at for this entire
+      # project's history. That meant every write landed on the container's ephemeral layer, not
+      # this named volume, and every embedding was silently lost on any `docker compose down` +
+      # `up` cycle that recreated the chroma container (undetected until now because previous
+      # troubleshooting only ever restarted api/worker, never chroma itself, so the same
+      # long-lived container process kept its in-memory-since-boot data intact by accident).
+      - chroma_data:/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  chroma_data:
+  minio_data:
+  onnx_model_cache:
