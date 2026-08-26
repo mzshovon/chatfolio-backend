@@ -599,6 +599,53 @@ it regardless.
 [{ "id": "uuid", "email": "ada@example.com", "role": "candidate", "is_active": true }]
 ```
 
+### `GET /api/v1/admin/users/{id}`
+
+Same shape as a list row, `404` if the id doesn't exist. Use this on the Edit User page's direct
+load/reload — without it, that page could only prefill from whatever the linking row passed via
+query string, with no way to independently load a user from just the `id` in the URL.
+
+### `POST /api/v1/admin/users` — 20/min per IP (the Add User page)
+
+```jsonc
+// Request
+{ "email": "new@example.com", "role": "candidate", "is_active": true }  // role/is_active optional, default candidate/true
+
+// 201 Created
+{ "id": "uuid", "email": "new@example.com", "role": "candidate", "is_active": true }
+```
+`409` if the email is already registered. There is **no temporary-password field in the
+request** — drop it from the Add User form if it's still there. The backend generates a random
+password server-side and emails it to the new account along with sign-in instructions; the
+password is never returned in this response or logged anywhere. The new user changes it
+themselves after first login (`POST /auth/change-password`, §2.7) — there's no forced-reset flag.
+
+### `PATCH /api/v1/admin/users/{id}` — 20/min per IP
+
+```jsonc
+// Request — every field optional, send only what changed
+{ "email": "ada@example.com", "role": "admin", "is_active": false }
+
+// 200 OK — full updated row
+{ "id": "uuid", "email": "ada@example.com", "role": "admin", "is_active": false }
+```
+This one endpoint covers Edit and Ban/Unban — `is_active: false` is exactly what "Ban" toggles;
+a banned user's `/auth/login` correctly starts returning `401` immediately (checked at login, not
+via any session invalidation — an already-issued access token still works until it naturally
+expires in 15 minutes, same "no revocation" caveat any `is_active` check has today). `409` if
+`email` collides with a different account.
+
+### `DELETE /api/v1/admin/users/{id}` — 20/min per IP
+
+```jsonc
+// 204 No Content
+```
+This is a **hard delete**, not a second soft-delete — `PATCH ... {"is_active": false}` already
+covers "ban," so this actually removes the account and cascades through everything it owns
+(profile, chatfolio, sections, CVs, chat sessions). `422` if you try to delete your own account
+(the currently-authenticated admin) — there's no recovery path from an admin locking themselves
+out, so the backend refuses outright rather than allowing it.
+
 ### `GET /api/v1/admin/chatfolios?is_published=true&limit=20&offset=0`
 `is_published` query param is optional — omit it to see both published and unpublished.
 ```jsonc
@@ -639,6 +686,77 @@ down — same effect as the candidate's own unpublish button, just admin-trigger
 here writes an audit log entry server-side; no separate audit-log endpoint exists yet to display
 that history in the UI, but the action itself is always recorded.
 
+### 8.1 Roles & Permissions — data management only, **not real access control**
+
+Powers `src/app/admin/roles/page.tsx` and `src/app/admin/permissions/page.tsx`, which were
+previously local-only mock CRUD tables with nothing behind them. Read this carefully before
+building UI that implies these do more than they do: **creating, editing, or deleting a role or
+permission here has zero effect on who can access what.** Actual authorization is still entirely
+`User.role` (`"candidate"` | `"admin"`) and the backend's `require_admin` check — the exact same
+as before this section existed. These endpoints are for admin-side bookkeeping/documentation of
+an intended permission scheme, not a live RBAC system. If the product later needs real granular
+permissions, that's a separate, larger backend change — don't wire any client-side feature-gating
+logic to these values today.
+
+#### `GET /api/v1/admin/roles?limit=20&offset=0`
+```jsonc
+[{ "id": "uuid", "name": "Admin", "description": "Full access to all admin views and actions.",
+   "permissions": ["users.view", "users.manage", "roles.manage"] }]
+```
+
+#### `POST /api/v1/admin/roles`
+```jsonc
+// Request
+{ "name": "Reviewer", "description": "Read-only access to chatfolios and metrics.",
+  "permissions": ["chatfolios.view", "metrics.view"] }
+// 201 Created — same shape plus id
+```
+`409` if `name` collides with an existing role.
+
+#### `PATCH /api/v1/admin/roles/{id}` — every field optional
+```jsonc
+{ "permissions": ["chatfolios.view", "metrics.view", "cvjobs.retry"] }
+// 200 OK — full updated row
+```
+
+#### `DELETE /api/v1/admin/roles/{id}`
+`204 No Content`. Since this table isn't linked to real users in any way, there's no "what
+happens to users on this role" question to worry about — it's just removing a row.
+
+#### `GET /api/v1/admin/permissions?limit=20&offset=0`
+```jsonc
+[{ "id": "uuid", "key": "users.view", "description": "View the users list.",
+   "used_by_roles_count": 3 }]
+```
+`used_by_roles_count` is computed at read time (how many roles currently list this key in their
+`permissions` array) — it's not a stored value, so it's always accurate, never stale.
+
+#### `POST /api/v1/admin/permissions`
+```jsonc
+// Request
+{ "key": "chatfolios.unpublish", "description": "Unpublish any chatfolio." }
+// 201 Created — { ..., "used_by_roles_count": 0 }
+```
+`key` must match `word.word` (lowercase letters/digits, one dot) — `422` otherwise. `409` if
+`key` already exists.
+
+#### `PATCH /api/v1/admin/permissions/{id}`
+```jsonc
+{ "description": "Unpublish any candidate's chatfolio." }
+// 200 OK — full updated row
+```
+**`key` cannot be changed** — it's the one field this endpoint doesn't accept. Renaming it would
+require migrating every role's `permissions` array that references the old key, which isn't
+supported; delete and recreate under a new key instead if you truly need to rename one.
+
+#### `DELETE /api/v1/admin/permissions/{id}`
+```jsonc
+// 204 No Content
+```
+Silently removes this key from every role's `permissions` array that granted it, then deletes the
+permission itself — matches the confirm dialog's existing copy ("will be removed from any roles
+that grant it"). Does not block on `used_by_roles_count > 0`.
+
 ---
 
 ## 9. Custom domains — not live yet
@@ -666,6 +784,7 @@ custom-domain redirect. Treat the whole feature as backend-scaffolding-only for 
 | `POST /auth/2fa/login/resend` | 3/min per IP |
 | `POST /auth/change-password`, `POST /auth/request-email-change` | 5/min per IP |
 | `POST /auth/confirm-email-change` | 10/min per IP |
+| `POST /admin/users`, `PATCH /admin/users/{id}`, `DELETE /admin/users/{id}` | 20/min per IP |
 | `POST /cv/upload`, `POST /cv/{id}/retry` | 10/hour per IP |
 | `POST /sections/{id}/regenerate` | 10/hour per IP |
 | Everything else under this doc | no explicit limit (still bounded by needing a valid token) |

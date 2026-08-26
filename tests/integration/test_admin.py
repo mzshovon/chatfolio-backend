@@ -12,6 +12,7 @@ from chatfolio.models.audit_log import AdminAuditLog
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.profile import CandidateProfile
 from chatfolio.models.user import User, UserRole
+from tests.conftest import fake_email_sender
 from tests.factories.fake_llm import FakeLLMFactory
 from tests.factories.publish_flow import authed_client, publish_full_profile
 
@@ -231,3 +232,231 @@ async def test_public_chatfolio_no_longer_reachable_after_admin_unpublish(
 
     response = await owner_client.get(f"/api/v1/public/chatfolio/{slug}")
     assert response.status_code == 404
+
+
+async def test_get_user_returns_single_row_by_id() -> None:
+    client, _ = await authed_client("admin-getuser-target@example.com")
+    admin_client, admin_headers = await _admin_client("admin-getuser-admin@example.com")
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(User).where(User.email == "admin-getuser-target@example.com")
+        )
+        user_id = result.scalar_one().id
+
+    response = await admin_client.get(f"/api/v1/admin/users/{user_id}", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["email"] == "admin-getuser-target@example.com"
+
+
+async def test_get_unknown_user_returns_404() -> None:
+    admin_client, admin_headers = await _admin_client("admin-getuser-404-admin@example.com")
+    response = await admin_client.get(
+        f"/api/v1/admin/users/{uuid.uuid4()}", headers=admin_headers
+    )
+    assert response.status_code == 404
+
+
+async def test_create_user_emails_a_temporary_password_and_writes_audit_log() -> None:
+    admin_client, admin_headers = await _admin_client("admin-createuser-admin@example.com")
+
+    response = await admin_client.post(
+        "/api/v1/admin/users",
+        headers=admin_headers,
+        json={"email": "admin-created@example.com", "role": "candidate", "is_active": True},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["email"] == "admin-created@example.com"
+    assert "password" not in body
+
+    assert fake_email_sender.sent[-1]["to"] == "admin-created@example.com"
+    assert "Temporary password" in fake_email_sender.sent[-1]["body"]
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(AdminAuditLog).where(AdminAuditLog.action == "user.create")
+        )
+        assert result.scalars().first() is not None
+
+
+async def test_create_user_rejects_duplicate_email() -> None:
+    await authed_client("admin-createuser-dupe@example.com")
+    admin_client, admin_headers = await _admin_client("admin-createuser-dupe-admin@example.com")
+
+    response = await admin_client.post(
+        "/api/v1/admin/users",
+        headers=admin_headers,
+        json={"email": "admin-createuser-dupe@example.com"},
+    )
+    assert response.status_code == 409
+
+
+async def test_update_user_bans_by_setting_is_active_false() -> None:
+    client, _ = await authed_client("admin-updateuser-target@example.com")
+    admin_client, admin_headers = await _admin_client("admin-updateuser-admin@example.com")
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(User).where(User.email == "admin-updateuser-target@example.com")
+        )
+        user_id = result.scalar_one().id
+
+    response = await admin_client.patch(
+        f"/api/v1/admin/users/{user_id}", headers=admin_headers, json={"is_active": False}
+    )
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+
+    banned_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "admin-updateuser-target@example.com", "password": "supersecret123"},
+    )
+    assert banned_login.status_code == 401
+
+
+async def test_delete_user_removes_the_account() -> None:
+    await authed_client("admin-deleteuser-target@example.com")
+    admin_client, admin_headers = await _admin_client("admin-deleteuser-admin@example.com")
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(User).where(User.email == "admin-deleteuser-target@example.com")
+        )
+        user_id = result.scalar_one().id
+
+    response = await admin_client.delete(
+        f"/api/v1/admin/users/{user_id}", headers=admin_headers
+    )
+    assert response.status_code == 204
+
+    follow_up = await admin_client.get(
+        f"/api/v1/admin/users/{user_id}", headers=admin_headers
+    )
+    assert follow_up.status_code == 404
+
+
+async def test_admin_cannot_delete_own_account() -> None:
+    admin_client, admin_headers = await _admin_client("admin-selfdelete@example.com")
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(User).where(User.email == "admin-selfdelete@example.com")
+        )
+        admin_id = result.scalar_one().id
+
+    response = await admin_client.delete(
+        f"/api/v1/admin/users/{admin_id}", headers=admin_headers
+    )
+    assert response.status_code == 422
+
+
+async def test_role_crud_lifecycle() -> None:
+    admin_client, admin_headers = await _admin_client("admin-role-crud@example.com")
+
+    create = await admin_client.post(
+        "/api/v1/admin/roles",
+        headers=admin_headers,
+        json={
+            "name": "Reviewer",
+            "description": "Read-only access to chatfolios and metrics.",
+            "permissions": ["chatfolios.view", "metrics.view"],
+        },
+    )
+    assert create.status_code == 201
+    role_id = create.json()["id"]
+
+    duplicate = await admin_client.post(
+        "/api/v1/admin/roles", headers=admin_headers, json={"name": "Reviewer"}
+    )
+    assert duplicate.status_code == 409
+
+    listed = await admin_client.get("/api/v1/admin/roles", headers=admin_headers)
+    assert any(r["id"] == role_id for r in listed.json())
+
+    update = await admin_client.patch(
+        f"/api/v1/admin/roles/{role_id}",
+        headers=admin_headers,
+        json={"permissions": ["chatfolios.view", "metrics.view", "cvjobs.retry"]},
+    )
+    assert update.status_code == 200
+    assert update.json()["permissions"] == ["chatfolios.view", "metrics.view", "cvjobs.retry"]
+
+    delete = await admin_client.delete(f"/api/v1/admin/roles/{role_id}", headers=admin_headers)
+    assert delete.status_code == 204
+
+    after_delete = await admin_client.get("/api/v1/admin/roles", headers=admin_headers)
+    assert not any(r["id"] == role_id for r in after_delete.json())
+
+
+async def test_permission_crud_lifecycle_and_key_immutability() -> None:
+    admin_client, admin_headers = await _admin_client("admin-permission-crud@example.com")
+
+    create = await admin_client.post(
+        "/api/v1/admin/permissions",
+        headers=admin_headers,
+        json={"key": "chatfolios.unpublish", "description": "Unpublish any chatfolio."},
+    )
+    assert create.status_code == 201
+    permission_id = create.json()["id"]
+    assert create.json()["used_by_roles_count"] == 0
+
+    bad_key = await admin_client.post(
+        "/api/v1/admin/permissions",
+        headers=admin_headers,
+        json={"key": "not a valid key!!", "description": "x"},
+    )
+    assert bad_key.status_code == 422
+
+    duplicate = await admin_client.post(
+        "/api/v1/admin/permissions",
+        headers=admin_headers,
+        json={"key": "chatfolios.unpublish", "description": "dupe"},
+    )
+    assert duplicate.status_code == 409
+
+    update = await admin_client.patch(
+        f"/api/v1/admin/permissions/{permission_id}",
+        headers=admin_headers,
+        json={"description": "Unpublish any candidate's chatfolio."},
+    )
+    assert update.status_code == 200
+    assert update.json()["description"] == "Unpublish any candidate's chatfolio."
+
+    delete = await admin_client.delete(
+        f"/api/v1/admin/permissions/{permission_id}", headers=admin_headers
+    )
+    assert delete.status_code == 204
+
+
+async def test_deleting_permission_strips_it_from_roles_that_grant_it() -> None:
+    admin_client, admin_headers = await _admin_client("admin-permission-strip@example.com")
+
+    permission = await admin_client.post(
+        "/api/v1/admin/permissions",
+        headers=admin_headers,
+        json={"key": "cvjobs.retry", "description": "Retry a failed CV job."},
+    )
+    permission_id = permission.json()["id"]
+
+    role = await admin_client.post(
+        "/api/v1/admin/roles",
+        headers=admin_headers,
+        json={"name": "Ops", "permissions": ["cvjobs.retry", "metrics.view"]},
+    )
+    role_id = role.json()["id"]
+
+    used = await admin_client.get("/api/v1/admin/permissions", headers=admin_headers)
+    matching = next(p for p in used.json() if p["id"] == permission_id)
+    assert matching["used_by_roles_count"] == 1
+
+    await admin_client.delete(f"/api/v1/admin/permissions/{permission_id}", headers=admin_headers)
+
+    roles = await admin_client.get("/api/v1/admin/roles", headers=admin_headers)
+    updated_role = next(r for r in roles.json() if r["id"] == role_id)
+    assert updated_role["permissions"] == ["metrics.view"]

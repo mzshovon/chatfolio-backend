@@ -4,13 +4,15 @@ from typing import Any
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatfolio.core.exceptions import NotFoundError, ValidationFailedError
+from chatfolio.core.exceptions import ConflictError, NotFoundError, ValidationFailedError
+from chatfolio.core.security import generate_opaque_token, hash_password
 from chatfolio.models.audit_log import AdminAuditLog
 from chatfolio.models.chat import ChatMessage, ChatSession, RecruiterMetadata
 from chatfolio.models.chatfolio import PortfolioVisit, PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.profile import DEFAULT_AI_TOKENS_MONTHLY_QUOTA, CandidateProfile
 from chatfolio.models.user import User, UserRole
+from chatfolio.notifications.base import EmailSender
 from chatfolio.workers.queue import JobQueue
 
 DEFAULT_PAGE_SIZE = 20
@@ -89,6 +91,77 @@ class AdminService:
         await self._session.flush()
         await self._log(admin, "chatfolio.unpublish", "public_chatfolio", str(chatfolio.id))
         return chatfolio, await self._owner_email_for_profile(chatfolio.profile_id)
+
+    async def get_user(self, user_id: uuid.UUID) -> User:
+        user = await self._session.get(User, user_id)
+        if user is None:
+            raise NotFoundError("User not found.")
+        return user
+
+    async def create_user(
+        self,
+        admin: User,
+        email: str,
+        role: UserRole,
+        is_active: bool,
+        *,
+        email_sender: EmailSender,
+    ) -> User:
+        existing = await self._session.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none() is not None:
+            raise ConflictError("An account with this email already exists.")
+
+        # Long and random, not a frontend-supplied "temporary password" field — the account owner
+        # never needs to type this themselves, only follow the emailed instructions to sign in
+        # and set their own password (§2.4's forgot/reset-password flow already exists for that).
+        temporary_password = generate_opaque_token()
+        user = User(
+            email=email,
+            hashed_password=hash_password(temporary_password),
+            role=role,
+            is_active=is_active,
+        )
+        self._session.add(user)
+        await self._session.flush()
+        await self._log(admin, "user.create", "user", str(user.id))
+
+        await email_sender.send(
+            to=email,
+            subject="Your Chatfolio account has been created",
+            body=(
+                "An administrator created a Chatfolio account for you.\n\n"
+                f"Email: {email}\n"
+                f"Temporary password: {temporary_password}\n\n"
+                "Please sign in and change your password as soon as possible."
+            ),
+        )
+        return user
+
+    async def update_user(
+        self, admin: User, user_id: uuid.UUID, updates: dict[str, object]
+    ) -> User:
+        user = await self.get_user(user_id)
+
+        new_email = updates.get("email")
+        if isinstance(new_email, str) and new_email != user.email:
+            existing = await self._session.execute(select(User).where(User.email == new_email))
+            if existing.scalar_one_or_none() is not None:
+                raise ConflictError("An account with this email already exists.")
+
+        for field, value in updates.items():
+            setattr(user, field, value)
+        await self._session.flush()
+        await self._log(admin, "user.update", "user", str(user.id))
+        return user
+
+    async def delete_user(self, admin: User, user_id: uuid.UUID) -> None:
+        if user_id == admin.id:
+            raise ValidationFailedError("You cannot delete your own account.")
+
+        user = await self.get_user(user_id)
+        await self._log(admin, "user.delete", "user", str(user.id))
+        await self._session.delete(user)
+        await self._session.flush()
 
     async def _owner_email_for_profile(self, profile_id: uuid.UUID) -> str:
         result = await self._session.execute(

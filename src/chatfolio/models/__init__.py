@@ -9,5 +9,6 @@ from chatfolio.models import (  # noqa: F401
     embedding,
     portfolio_section,
     profile,
+    rbac,
     user,
 )

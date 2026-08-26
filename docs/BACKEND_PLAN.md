@@ -400,11 +400,17 @@ POST   /api/v1/dashboard/conversations/{id}/mark-reviewed
 GET    /api/v1/dashboard/analytics
 
 GET    /api/v1/admin/users
+GET    /api/v1/admin/users/{id}
+POST   /api/v1/admin/users
+PATCH  /api/v1/admin/users/{id}
+DELETE /api/v1/admin/users/{id}
 GET    /api/v1/admin/chatfolios
 GET    /api/v1/admin/metrics
 GET    /api/v1/admin/cv-jobs/failed
 POST   /api/v1/admin/cv-jobs/{id}/retry
 POST   /api/v1/admin/chatfolios/{id}/unpublish
+GET    /api/v1/admin/roles          (+ POST, PATCH/{id}, DELETE/{id})  # data-only, no enforcement
+GET    /api/v1/admin/permissions    (+ POST, PATCH/{id}, DELETE/{id})  # data-only, no enforcement
 ```
 
 ---
@@ -496,6 +502,53 @@ Each phase should ship with tests before moving to the next — no phase depends
 ---
 
 ## 16. Changelog
+
+- **2026-08-26** — Step 5 (final step) of the `Required_API_Doc.md` gap-closure plan: admin user
+  management (§3) and admin Roles/Permissions (§4, §5) — CRUD-only, confirmed with the user
+  before starting given the doc's own open question about whether these should carry real
+  enforcement (they don't; see below).
+  - **Admin user management** extends the existing `AdminService`/`admin.py` router — the
+    existing `GET /admin/users` list is untouched. `GET /admin/users/{id}` (`404` if missing).
+    `POST /admin/users` generates a random server-side temporary password
+    (`generate_opaque_token`, the same primitive `RefreshToken`/`PasswordResetToken` already use)
+    and **emails it** rather than accepting one from the request or returning it in the
+    response — the doc explicitly flagged this as an open question, and this is the safer default
+    now that real email infrastructure exists (§1 of this changelog). `PATCH /admin/users/{id}`
+    covers edit + ban/unban in one call (`is_active: false` bans; a banned account's
+    `/auth/login` immediately starts returning `401`, though an already-issued access token isn't
+    separately revoked and stays valid until its normal 15-minute expiry — same caveat any
+    `is_active` check in this codebase has). `DELETE /admin/users/{id}` is a **hard delete** —
+    `PATCH ... is_active: false` already covers soft-delete/ban, so a second one would be
+    redundant; cascades cleanly through the existing `ondelete="CASCADE"` chain
+    (`candidate_profiles.user_id` → chatfolio → sections/children), the same chain this session's
+    own manual test cleanup (`DELETE FROM users WHERE ...`) has relied on throughout. Added one
+    safety rail beyond the doc's own spec: an admin cannot delete their own account (`422`) —
+    there's no recovery path from an admin locking themselves out, so refuse outright rather than
+    allow it.
+  - **Roles & Permissions are deliberately data-only** — new independent `Role`/`Permission`
+    models (`models/rbac.py`, migration `3ca071fdd13b`), **not referenced by `User` anywhere**.
+    `User.role` (`candidate`/`admin`) and the `require_admin` dependency are completely
+    untouched — creating, editing, or deleting a role/permission here has zero effect on who can
+    actually access what. This exists purely so `src/app/admin/roles/page.tsx` and
+    `.../permissions/page.tsx` (previously fully local-only mock CRUD tables) have something real
+    to read and write. `Permission.key` is immutable after creation (excluded from its `PATCH`
+    schema entirely) to sidestep the doc's own flagged migration problem — renaming a key that's
+    referenced by role `permissions` arrays would need an atomic multi-row update this doesn't
+    attempt. `used_by_roles_count` is computed at read time (Python-side scan of every role's
+    `permissions` JSON array, not stored) so it's never stale. Deleting a permission strips its
+    key from every role that granted it rather than blocking — matches the frontend's existing
+    confirm-dialog copy ("will be removed from any roles that grant it").
+  - Verified live end-to-end against the real running stack (registered a fresh user, promoted to
+    admin via direct DB update — same technique this session's own admin tests use): created a
+    user via `POST /admin/users` and confirmed a real email actually sent (the user has since
+    configured real Mailtrap SMTP credentials in `.env`, so this was a genuine delivery, not a
+    logged-and-skipped no-op); `PATCH` ban correctly blocked login; duplicate-email `409`;
+    self-delete correctly `422`; hard delete confirmed via a follow-up `404`. Full role/permission
+    CRUD cycle including the "delete permission strips it from roles" behavior. Full suite (122
+    tests, 10 new) plus `ruff`/`mypy` clean. `ADMIN_PANEL_UI_REFERENCE.md` §8 gained the four new
+    user endpoints plus a new §8.1 for roles/permissions with an explicit warning against treating
+    them as real access control; rate-limit table updated. **This closes every gap listed in
+    `Required_API_Doc.md`** — see that doc's own summary table for the original scope.
 
 - **2026-08-26** — Step 4 of the `Required_API_Doc.md` gap-closure plan: real analytics, closing
   §2 (candidate dashboard) and §6 (admin platform analytics, Option A — extending the existing

@@ -1,11 +1,18 @@
 import uuid
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, status
 
-from chatfolio.api.deps import AdminUserDep, DbSessionDep, JobQueueDep
+from chatfolio.api.deps import AdminUserDep, DbSessionDep, EmailSenderDep, JobQueueDep
+from chatfolio.core.rate_limit import limiter
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.cv import UploadedCV
-from chatfolio.schemas.admin import AdminChatfolioResponse, AdminCVJobResponse, AdminMetricsResponse
+from chatfolio.schemas.admin import (
+    AdminChatfolioResponse,
+    AdminCreateUserRequest,
+    AdminCVJobResponse,
+    AdminMetricsResponse,
+    AdminUpdateUserRequest,
+)
 from chatfolio.schemas.auth import UserResponse
 from chatfolio.services.admin_service import AdminService
 
@@ -46,6 +53,61 @@ async def list_users(
 ) -> list[UserResponse]:
     users = await _service(session, job_queue).list_users(limit=limit, offset=offset)
     return [UserResponse.model_validate(user) for user in users]
+
+
+@router.get("/users/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: uuid.UUID, current_user: AdminUserDep, session: DbSessionDep, job_queue: JobQueueDep
+) -> UserResponse:
+    user = await _service(session, job_queue).get_user(user_id)
+    return UserResponse.model_validate(user)
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
+async def create_user(
+    request: Request,
+    payload: AdminCreateUserRequest,
+    current_user: AdminUserDep,
+    session: DbSessionDep,
+    job_queue: JobQueueDep,
+    email_sender: EmailSenderDep,
+) -> UserResponse:
+    user = await _service(session, job_queue).create_user(
+        current_user,
+        payload.email,
+        payload.role,
+        payload.is_active,
+        email_sender=email_sender,
+    )
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+@limiter.limit("20/minute")
+async def update_user(
+    request: Request,
+    user_id: uuid.UUID,
+    payload: AdminUpdateUserRequest,
+    current_user: AdminUserDep,
+    session: DbSessionDep,
+    job_queue: JobQueueDep,
+) -> UserResponse:
+    updates = payload.model_dump(exclude_unset=True)
+    user = await _service(session, job_queue).update_user(current_user, user_id, updates)
+    return UserResponse.model_validate(user)
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+async def delete_user(
+    request: Request,
+    user_id: uuid.UUID,
+    current_user: AdminUserDep,
+    session: DbSessionDep,
+    job_queue: JobQueueDep,
+) -> None:
+    await _service(session, job_queue).delete_user(current_user, user_id)
 
 
 @router.get("/chatfolios", response_model=list[AdminChatfolioResponse])
