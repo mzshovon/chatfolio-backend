@@ -16,6 +16,7 @@ from chatfolio.core.security import (
     verify_password,
 )
 from chatfolio.models.user import (
+    EmailChangeRequest,
     OtpCode,
     OtpPurpose,
     PasswordResetToken,
@@ -156,6 +157,81 @@ class AuthService:
         user.hashed_password = hash_password(new_password)
         stored.used_at = datetime.now(UTC)
         await self._repository.revoke_all_refresh_tokens_for_user(user.id)
+
+    async def change_password(
+        self, user: User, current_password: str, new_password: str
+    ) -> None:
+        if not verify_password(current_password, user.hashed_password):
+            raise UnauthorizedError("Current password is incorrect.")
+        # Deliberately does NOT revoke other sessions — unlike forgot/reset-password (a
+        # compromise-recovery flow), this is an already-logged-in user who just proved they know
+        # the current password, not evidence the account was taken over elsewhere.
+        user.hashed_password = hash_password(new_password)
+
+    async def request_email_change(
+        self,
+        user: User,
+        new_email: str,
+        password: str,
+        *,
+        email_sender: EmailSender,
+        frontend_base_url: str,
+    ) -> None:
+        if not verify_password(password, user.hashed_password):
+            raise UnauthorizedError("Password is incorrect.")
+
+        existing = await self._repository.get_by_email(new_email)
+        if existing is not None:
+            raise ConflictError("An account with this email already exists.")
+
+        raw_token = generate_opaque_token()
+        request = EmailChangeRequest(
+            user_id=user.id,
+            new_email=new_email,
+            token_hash=hash_opaque_token(raw_token),
+            expires_at=datetime.now(UTC)
+            + timedelta(minutes=self._settings.email_change_token_ttl_minutes),
+        )
+        await self._repository.add_email_change_request(request)
+
+        confirm_link = f"{frontend_base_url}/confirm-email-change?token={raw_token}"
+        await email_sender.send(
+            to=new_email,
+            subject="Confirm your new Chatfolio email address",
+            body=(
+                "We received a request to change the email address on your Chatfolio account "
+                "to this one.\n\n"
+                f"Confirm it here: {confirm_link}\n\n"
+                f"This link expires in {self._settings.email_change_token_ttl_minutes} minutes. "
+                "If you didn't request this, you can safely ignore this email — your account "
+                "email will not change."
+            ),
+        )
+
+    async def confirm_email_change(self, raw_token: str) -> User:
+        token_hash = hash_opaque_token(raw_token)
+        stored = await self._repository.get_email_change_request_by_hash(token_hash)
+
+        if (
+            stored is None
+            or stored.used_at is not None
+            or stored.expires_at < datetime.now(UTC)
+        ):
+            raise UnauthorizedError("This confirmation link is invalid or has expired.")
+
+        # Re-check uniqueness at confirm time too, not just at request time — the address could
+        # have been claimed by a different account in the time between the two.
+        existing = await self._repository.get_by_email(stored.new_email)
+        if existing is not None:
+            raise ConflictError("An account with this email already exists.")
+
+        user = await self._repository.get_by_id(stored.user_id)
+        if user is None:
+            raise UnauthorizedError("This confirmation link is invalid or has expired.")
+
+        user.email = stored.new_email
+        stored.used_at = datetime.now(UTC)
+        return user
 
     async def setup_two_factor(
         self,

@@ -236,6 +236,50 @@ Use this for the code screen's "Didn't get a code? Resend" link. Resending inval
 code was sent before it, so a stale "verify" call using the old code after a resend correctly
 gets `401` — don't treat that as a bug if you see it while testing.
 
+### 2.7 Account settings (change password, change email)
+
+Powers the `/dashboard/settings` page linked from the header's "Account settings" menu item.
+Both require login and re-prove the current password — neither trusts the access token alone for
+a change this sensitive.
+
+#### `POST /api/v1/auth/change-password` — requires login, 5/min per IP
+
+```jsonc
+// Request
+{ "current_password": "supersecret123", "new_password": "brandnewpass456" }  // new: 8-128 chars
+// 204 No Content
+```
+`401` if `current_password` doesn't match. Unlike forgot/reset-password (§2.4), this does **not**
+revoke other logged-in sessions — the user just proved they know the current password, so there's
+no compromise to recover from; other tabs/devices stay signed in.
+
+#### `POST /api/v1/auth/request-email-change` — requires login, 5/min per IP
+
+```jsonc
+// Request
+{ "new_email": "ada+new@example.com", "password": "supersecret123" }
+// 204 No Content
+```
+`401` if `password` is wrong. `409` if `new_email` already belongs to another account. This is
+**verify-first**, not immediate: nothing changes yet. A confirmation email is sent to the *new*
+address (not the current one) with a link shaped like
+`{FRONTEND_BASE_URL}/confirm-email-change?token=<opaque-token>` — build a page at that route that
+reads `token` from the query string and calls the endpoint below. The token expires in **30
+minutes** and is single-use.
+
+#### `POST /api/v1/auth/confirm-email-change` — no login required (the token is the proof)
+
+```jsonc
+// Request
+{ "token": "the-token-from-the-query-string" }
+// 200 OK — the account's email has now actually changed
+{ "id": "uuid", "email": "ada+new@example.com", "role": "candidate", "is_active": true }
+```
+`401` if the token is invalid, expired, or already used. `409` in the rare case the new address
+got claimed by a different account in the time between the request and this confirm click — show
+"this email is no longer available" and send the user back to request a different one. On success
+the account's login email is now the new address — the *old* email no longer works for login.
+
 ---
 
 ## 3. Candidate profile
@@ -592,6 +636,8 @@ custom-domain redirect. Treat the whole feature as backend-scaffolding-only for 
 | `POST /auth/2fa/setup` | 5/min per IP |
 | `POST /auth/2fa/verify-setup`, `POST /auth/2fa/login/verify` | 10/min per IP |
 | `POST /auth/2fa/login/resend` | 3/min per IP |
+| `POST /auth/change-password`, `POST /auth/request-email-change` | 5/min per IP |
+| `POST /auth/confirm-email-change` | 10/min per IP |
 | `POST /cv/upload`, `POST /cv/{id}/retry` | 10/hour per IP |
 | `POST /sections/{id}/regenerate` | 10/hour per IP |
 | Everything else under this doc | no explicit limit (still bounded by needing a valid token) |

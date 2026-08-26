@@ -9,10 +9,13 @@ from chatfolio.api.deps import (
 )
 from chatfolio.core.rate_limit import limiter
 from chatfolio.schemas.auth import (
+    ChangePasswordRequest,
+    ConfirmEmailChangeRequest,
     ForgotPasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    RequestEmailChangeRequest,
     ResetPasswordRequest,
     TokenResponse,
     TwoFactorChallengeResponse,
@@ -107,6 +110,51 @@ async def reset_password(
     settings: SettingsDep,
 ) -> None:
     await _service(repository, settings).reset_password(payload.token, payload.new_password)
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    payload: ChangePasswordRequest,
+    current_user: CurrentUserDep,
+    repository: UserRepositoryDep,
+    settings: SettingsDep,
+) -> None:
+    await _service(repository, settings).change_password(
+        current_user, payload.current_password, payload.new_password
+    )
+
+
+@router.post("/request-email-change", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def request_email_change(
+    request: Request,
+    payload: RequestEmailChangeRequest,
+    current_user: CurrentUserDep,
+    repository: UserRepositoryDep,
+    settings: SettingsDep,
+    email_sender: EmailSenderDep,
+) -> None:
+    await _service(repository, settings).request_email_change(
+        current_user,
+        payload.new_email,
+        payload.password,
+        email_sender=email_sender,
+        frontend_base_url=settings.app.frontend_base_url,
+    )
+
+
+@router.post("/confirm-email-change", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def confirm_email_change(
+    request: Request,
+    payload: ConfirmEmailChangeRequest,
+    repository: UserRepositoryDep,
+    settings: SettingsDep,
+) -> UserResponse:
+    user = await _service(repository, settings).confirm_email_change(payload.token)
+    return UserResponse.model_validate(user)
 
 
 @router.post("/2fa/setup", response_model=TwoFactorSetupResponse)

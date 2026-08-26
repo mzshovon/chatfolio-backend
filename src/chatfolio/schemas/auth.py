@@ -79,3 +79,17 @@ class TwoFactorLoginVerifyRequest(BaseModel):
 
 class TwoFactorResendRequest(BaseModel):
     challenge_token: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class RequestEmailChangeRequest(BaseModel):
+    new_email: EmailStr
+    password: str
+
+
+class ConfirmEmailChangeRequest(BaseModel):
+    token: str

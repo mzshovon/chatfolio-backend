@@ -3,7 +3,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 
-from chatfolio.models.user import OtpCode, OtpPurpose, PasswordResetToken, RefreshToken, User
+from chatfolio.models.user import (
+    EmailChangeRequest,
+    OtpCode,
+    OtpPurpose,
+    PasswordResetToken,
+    RefreshToken,
+    User,
+)
 from chatfolio.repositories.base import BaseRepository
 
 
@@ -53,6 +60,19 @@ class UserRepository(BaseRepository):
     ) -> PasswordResetToken | None:
         result = await self.session.execute(
             select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+    async def add_email_change_request(self, request: EmailChangeRequest) -> EmailChangeRequest:
+        self.session.add(request)
+        await self.session.flush()
+        return request
+
+    async def get_email_change_request_by_hash(
+        self, token_hash: str
+    ) -> EmailChangeRequest | None:
+        result = await self.session.execute(
+            select(EmailChangeRequest).where(EmailChangeRequest.token_hash == token_hash)
         )
         return result.scalar_one_or_none()
 

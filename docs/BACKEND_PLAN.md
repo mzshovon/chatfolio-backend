@@ -364,6 +364,9 @@ POST   /api/v1/auth/2fa/setup                  # requires auth
 POST   /api/v1/auth/2fa/verify-setup           # requires auth
 POST   /api/v1/auth/2fa/login/verify           # no auth; redeems a login challenge_token
 POST   /api/v1/auth/2fa/login/resend           # no auth; redeems a login challenge_token
+POST   /api/v1/auth/change-password            # requires auth
+POST   /api/v1/auth/request-email-change       # requires auth
+POST   /api/v1/auth/confirm-email-change       # no auth; redeems an email-change token
 
 GET    /api/v1/profiles/me
 PATCH  /api/v1/profiles/me
@@ -492,6 +495,42 @@ Each phase should ship with tests before moving to the next — no phase depends
 ---
 
 ## 16. Changelog
+
+- **2026-08-26** — Step 3 of the `Required_API_Doc.md` gap-closure plan: candidate account
+  settings (`§1` of that doc) — change password, and a verify-first change-email flow, backing
+  the `/dashboard/settings` page the frontend already has a disabled header menu item for.
+  - **`POST /auth/change-password`** — `AuthService.change_password` re-verifies
+    `current_password` before re-hashing; deliberately does **not** revoke other refresh tokens
+    (unlike `reset_password`, which does) since this is a user who already proved they know the
+    password, not a compromise-recovery flow. Confirmed with the user before building given the
+    doc explicitly flagged this as an open question.
+  - **Change-email is two calls, not the doc's original one-call sketch** — confirmed with the
+    user given the security tradeoff (an unverified single-call change lets a typo or a
+    stolen-password attacker lock the real owner out of email-based recovery immediately).
+    `POST /auth/request-email-change` re-verifies `password`, checks `new_email` isn't already
+    registered (`409`), and emails a confirmation link to the **new** address — reusing the exact
+    `EmailSender`/opaque-token pattern from `forgot_password`/`PasswordResetToken`. New
+    `EmailChangeRequest` model (migration `13862087f70d`) is a straight copy of that shape plus a
+    `new_email` column. `POST /auth/confirm-email-change` (no auth — the token is the proof)
+    validates single-use + 30-min expiry, **re-checks the uniqueness constraint again** at confirm
+    time (the address could have been claimed by someone else in the gap between request and
+    click) before actually flipping `user.email`.
+  - Verified live: wrong current/account password on both endpoints → `401`; requesting a
+    duplicate email → `409`; a bad confirm token → `401`; full suite (110 tests, 9 new) plus
+    `ruff`/`mypy` clean. `ADMIN_PANEL_UI_REFERENCE.md` gained §2.7 with full request/response
+    samples for all three endpoints; rate-limit table updated to match.
+  - **Incident during this step, fully recovered, no data lost**: while cleaning up what looked
+    like a stray container-only duplicate directory, ran `docker compose exec api rm -rf
+    /app/src/chatfolio` — `docker-compose.yml`'s `api`/`worker` services bind-mount `./src` into
+    the container (`./src:/app/src`), a detail missed despite having read that file earlier, so
+    the command deleted the real `src/chatfolio` directory on disk, not a container-only copy.
+    Recovered via `git checkout HEAD -- .` against a snapshot the user had just committed
+    (`cd6e07d`, capturing this changelog's Step 1 and Step 2 entries in full), then manually
+    reapplied this step's still-uncommitted work from scratch. Net effect: zero data loss, but a
+    reminder that `src/` edits never need `docker compose cp` at all now (they're already live in
+    the container via the bind mount) — only `alembic/versions/` and `tests/` still need explicit
+    `cp` since neither is mounted, and no `rm -rf` should ever target a path under `/app/src`
+    again.
 
 - **2026-08-26** — Step 2 of the `Required_API_Doc.md` gap-closure plan: real LLM token-usage
   tracking, groundwork for §2/§6's analytics endpoints (not yet exposed anywhere — purely internal

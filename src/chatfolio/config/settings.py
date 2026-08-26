@@ -85,6 +85,7 @@ class SecuritySettings(_Base):
     refresh_token_ttl_days: int = 30
     cors_origins: list[str] = ["http://localhost:3000"]
     password_reset_token_ttl_minutes: int = 30
+    email_change_token_ttl_minutes: int = 30
     two_factor_challenge_ttl_minutes: int = 5
     otp_ttl_minutes: int = 10
     otp_max_attempts: int = 5

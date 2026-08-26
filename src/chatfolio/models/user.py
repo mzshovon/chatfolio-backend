@@ -75,6 +75,23 @@ class PasswordResetToken(UUIDPrimaryKeyMixin, Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
+class EmailChangeRequest(UUIDPrimaryKeyMixin, Base):
+    """Single-use, opaque token emailed to the NEW address to confirm an email change before it
+    takes effect. Modeled after PasswordResetToken (hash-only at rest, expiry, one-shot use);
+    `new_email` sits alongside the token so applying it doesn't need the request to still be
+    "current" in any other sense — the token itself is the entire authorization."""
+
+    __tablename__ = "email_change_requests"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    new_email: Mapped[str] = mapped_column(String(255))
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
 class OtpCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """6-digit codes for 2FA enrollment and 2FA login, delivered by email/SMS/both. `channel`
     records where THIS code was actually sent (for the "both" method, one row exists per send
