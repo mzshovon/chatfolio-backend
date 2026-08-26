@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Query, Request, status
 
 from chatfolio.api.deps import AdminUserDep, DbSessionDep, EmailSenderDep, JobQueueDep
 from chatfolio.core.rate_limit import limiter
@@ -72,6 +72,7 @@ async def create_user(
     session: DbSessionDep,
     job_queue: JobQueueDep,
     email_sender: EmailSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> UserResponse:
     user = await _service(session, job_queue).create_user(
         current_user,
@@ -79,6 +80,7 @@ async def create_user(
         payload.role,
         payload.is_active,
         email_sender=email_sender,
+        background_tasks=background_tasks,
     )
     return UserResponse.model_validate(user)
 

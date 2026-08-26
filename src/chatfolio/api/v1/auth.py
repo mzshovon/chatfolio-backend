@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, BackgroundTasks, Request, status
 
 from chatfolio.api.deps import (
     CurrentUserDep,
@@ -56,9 +56,14 @@ async def login(
     settings: SettingsDep,
     email_sender: EmailSenderDep,
     sms_sender: SmsSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> TokenResponse | TwoFactorChallengeResponse:
     return await _service(repository, settings).login(
-        payload.email, payload.password, email_sender=email_sender, sms_sender=sms_sender
+        payload.email,
+        payload.password,
+        email_sender=email_sender,
+        sms_sender=sms_sender,
+        background_tasks=background_tasks,
     )
 
 
@@ -94,10 +99,14 @@ async def forgot_password(
     repository: UserRepositoryDep,
     settings: SettingsDep,
     email_sender: EmailSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> None:
     # Always 204, whether or not the email is registered — see AuthService.forgot_password.
     await _service(repository, settings).forgot_password(
-        payload.email, email_sender=email_sender, frontend_base_url=settings.app.frontend_base_url
+        payload.email,
+        email_sender=email_sender,
+        frontend_base_url=settings.app.frontend_base_url,
+        background_tasks=background_tasks,
     )
 
 
@@ -135,6 +144,7 @@ async def request_email_change(
     repository: UserRepositoryDep,
     settings: SettingsDep,
     email_sender: EmailSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> None:
     await _service(repository, settings).request_email_change(
         current_user,
@@ -142,6 +152,7 @@ async def request_email_change(
         payload.password,
         email_sender=email_sender,
         frontend_base_url=settings.app.frontend_base_url,
+        background_tasks=background_tasks,
     )
 
 
@@ -167,6 +178,7 @@ async def setup_two_factor(
     settings: SettingsDep,
     email_sender: EmailSenderDep,
     sms_sender: SmsSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> TwoFactorSetupResponse:
     return await _service(repository, settings).setup_two_factor(
         current_user,
@@ -174,6 +186,7 @@ async def setup_two_factor(
         payload.phone,
         email_sender=email_sender,
         sms_sender=sms_sender,
+        background_tasks=background_tasks,
     )
 
 
@@ -211,7 +224,11 @@ async def resend_two_factor_login_code(
     settings: SettingsDep,
     email_sender: EmailSenderDep,
     sms_sender: SmsSenderDep,
+    background_tasks: BackgroundTasks,
 ) -> None:
     await _service(repository, settings).resend_two_factor_login_code(
-        payload.challenge_token, email_sender=email_sender, sms_sender=sms_sender
+        payload.challenge_token,
+        email_sender=email_sender,
+        sms_sender=sms_sender,
+        background_tasks=background_tasks,
     )

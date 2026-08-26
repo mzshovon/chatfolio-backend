@@ -503,6 +503,36 @@ Each phase should ship with tests before moving to the next — no phase depends
 
 ## 16. Changelog
 
+- **2026-08-26** — Fixed every outbound email/SMS send (password reset, 2FA setup/login codes,
+  email-change confirmation, admin-created-user credentials) blocking its HTTP response on the
+  full SMTP/SMS round-trip — user-reported while reviewing the codebase. `EmailSender.send`/
+  `SmsSender.send` were being `await`ed directly inline in `AuthService`/`AdminService` methods,
+  so a slow SMTP handshake (or a slow SMS vendor) added its full latency to the response time of
+  `/auth/forgot-password`, `/auth/2fa/*`, `/auth/request-email-change`, and `POST /admin/users`.
+  Switched every one of those sends to FastAPI's `BackgroundTasks.add_task(...)` instead of
+  `await ...send(...)` — Starlette sends the HTTP response to the client first, then runs
+  background tasks, so the caller gets their `204`/`200` back immediately and the actual
+  SMTP/SMS work happens after. Chose this over routing through the existing arq job queue
+  (`workers/`) deliberately: arq requires the separate `worker` container to be healthy and adds
+  real queue latency, whereas `BackgroundTasks` needs no new infrastructure and fits a "do this
+  right after responding" need exactly, without the job-registration/`ctx` boilerplate a new arq
+  job would need.
+  - Every service method that used to accept `email_sender`/`sms_sender` now also takes a
+    `background_tasks: BackgroundTasks` parameter, threaded from each route in `auth.py`/`admin.py`
+    the same way `email_sender`/`sms_sender` already were — no dependency wiring changes needed,
+    `BackgroundTasks` is a plain FastAPI parameter type, not a `Depends`.
+  - **No test changes needed** — confirmed by re-running the full suite unchanged: Starlette
+    executes `BackgroundTasks` as part of the same ASGI response lifecycle, so by the time
+    `await client.post(...)` returns in a test (even over `httpx.ASGITransport`, which runs the
+    real ASGI app in-process), the background send has already completed. Existing tests that
+    extract a code/token from `fake_email_sender.sent[-1]["body"]` immediately after the request
+    keep working exactly as before.
+  - Verified live against the real running stack with real SMTP now configured (the user has
+    since added Mailtrap credentials to `.env`): `POST /auth/forgot-password` returned in `5.7ms`
+    — orders of magnitude faster than any real SMTP handshake — with no error in the API logs
+    afterward, confirming the background send completed cleanly rather than silently failing.
+    Full suite (122 tests, unchanged) plus `ruff`/`mypy` clean.
+
 - **2026-08-26** — Step 5 (final step) of the `Required_API_Doc.md` gap-closure plan: admin user
   management (§3) and admin Roles/Permissions (§4, §5) — CRUD-only, confirmed with the user
   before starting given the doc's own open question about whether these should carry real

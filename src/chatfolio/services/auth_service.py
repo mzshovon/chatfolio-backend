@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from fastapi import BackgroundTasks
 
 from chatfolio.config.settings import SecuritySettings
 from chatfolio.core.exceptions import ConflictError, UnauthorizedError, ValidationFailedError
@@ -62,7 +63,13 @@ class AuthService:
         return await self._repository.create(user)
 
     async def login(
-        self, email: str, password: str, *, email_sender: EmailSender, sms_sender: SmsSender
+        self,
+        email: str,
+        password: str,
+        *,
+        email_sender: EmailSender,
+        sms_sender: SmsSender,
+        background_tasks: BackgroundTasks,
     ) -> TokenResponse | TwoFactorChallengeResponse:
         user = await self._repository.get_by_email(email)
         if user is None or not verify_password(password, user.hashed_password):
@@ -73,7 +80,12 @@ class AuthService:
         if user.two_factor_enabled and user.two_factor_method is not None:
             method = user.two_factor_method
             await self._issue_otp(
-                user, OtpPurpose.TWO_FACTOR_LOGIN, method, email_sender, sms_sender
+                user,
+                OtpPurpose.TWO_FACTOR_LOGIN,
+                method,
+                email_sender,
+                sms_sender,
+                background_tasks,
             )
             challenge_token = create_two_factor_challenge_token(
                 user_id=user.id, settings=self._settings
@@ -110,7 +122,12 @@ class AuthService:
             await self._repository.revoke_refresh_token(stored_token)
 
     async def forgot_password(
-        self, email: str, *, email_sender: EmailSender, frontend_base_url: str
+        self,
+        email: str,
+        *,
+        email_sender: EmailSender,
+        frontend_base_url: str,
+        background_tasks: BackgroundTasks,
     ) -> None:
         """Always returns None regardless of whether the email exists — the caller (route) must
         not branch on this to avoid leaking which emails are registered."""
@@ -128,7 +145,8 @@ class AuthService:
         await self._repository.add_password_reset_token(token)
 
         reset_link = f"{frontend_base_url}/reset-password?token={raw_token}"
-        await email_sender.send(
+        background_tasks.add_task(
+            email_sender.send,
             to=user.email,
             subject="Reset your Chatfolio password",
             body=(
@@ -176,6 +194,7 @@ class AuthService:
         *,
         email_sender: EmailSender,
         frontend_base_url: str,
+        background_tasks: BackgroundTasks,
     ) -> None:
         if not verify_password(password, user.hashed_password):
             raise UnauthorizedError("Password is incorrect.")
@@ -195,7 +214,8 @@ class AuthService:
         await self._repository.add_email_change_request(request)
 
         confirm_link = f"{frontend_base_url}/confirm-email-change?token={raw_token}"
-        await email_sender.send(
+        background_tasks.add_task(
+            email_sender.send,
             to=new_email,
             subject="Confirm your new Chatfolio email address",
             body=(
@@ -241,6 +261,7 @@ class AuthService:
         *,
         email_sender: EmailSender,
         sms_sender: SmsSender,
+        background_tasks: BackgroundTasks,
     ) -> TwoFactorSetupResponse:
         needs_phone = method in (TwoFactorMethod.PHONE, TwoFactorMethod.BOTH)
         if needs_phone and phone:
@@ -248,7 +269,9 @@ class AuthService:
         if needs_phone and not user.phone:
             raise ValidationFailedError("A phone number is required for this two-factor method.")
 
-        await self._issue_otp(user, OtpPurpose.TWO_FACTOR_ENROLL, method, email_sender, sms_sender)
+        await self._issue_otp(
+            user, OtpPurpose.TWO_FACTOR_ENROLL, method, email_sender, sms_sender, background_tasks
+        )
         return TwoFactorSetupResponse(
             method=method, masked_destinations=_destinations_for(method, user)
         )
@@ -270,7 +293,12 @@ class AuthService:
         return await self._issue_tokens(user)
 
     async def resend_two_factor_login_code(
-        self, challenge_token: str, *, email_sender: EmailSender, sms_sender: SmsSender
+        self,
+        challenge_token: str,
+        *,
+        email_sender: EmailSender,
+        sms_sender: SmsSender,
+        background_tasks: BackgroundTasks,
     ) -> None:
         user_id = self._decode_challenge(challenge_token)
         user = await self._repository.get_by_id(user_id)
@@ -284,7 +312,12 @@ class AuthService:
             previous.consumed_at = datetime.now(UTC)
 
         await self._issue_otp(
-            user, OtpPurpose.TWO_FACTOR_LOGIN, user.two_factor_method, email_sender, sms_sender
+            user,
+            OtpPurpose.TWO_FACTOR_LOGIN,
+            user.two_factor_method,
+            email_sender,
+            sms_sender,
+            background_tasks,
         )
 
     def _decode_challenge(self, challenge_token: str) -> uuid.UUID:
@@ -304,6 +337,7 @@ class AuthService:
         method: TwoFactorMethod,
         email_sender: EmailSender,
         sms_sender: SmsSender,
+        background_tasks: BackgroundTasks,
     ) -> None:
         code = generate_otp_code()
         otp = OtpCode(
@@ -320,11 +354,14 @@ class AuthService:
             f"It expires in {self._settings.otp_ttl_minutes} minutes."
         )
         if method in (TwoFactorMethod.EMAIL, TwoFactorMethod.BOTH):
-            await email_sender.send(
-                to=user.email, subject="Your Chatfolio verification code", body=message
+            background_tasks.add_task(
+                email_sender.send,
+                to=user.email,
+                subject="Your Chatfolio verification code",
+                body=message,
             )
         if method in (TwoFactorMethod.PHONE, TwoFactorMethod.BOTH) and user.phone:
-            await sms_sender.send(to=user.phone, message=message)
+            background_tasks.add_task(sms_sender.send, to=user.phone, message=message)
 
     async def _consume_otp(self, user_id: uuid.UUID, purpose: OtpPurpose, code: str) -> OtpCode:
         otp = await self._repository.get_latest_active_otp(user_id, purpose)

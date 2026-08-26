@@ -1,6 +1,7 @@
 import uuid
 from typing import Any
 
+from fastapi import BackgroundTasks
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,6 +107,7 @@ class AdminService:
         is_active: bool,
         *,
         email_sender: EmailSender,
+        background_tasks: BackgroundTasks,
     ) -> User:
         existing = await self._session.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none() is not None:
@@ -125,7 +127,8 @@ class AdminService:
         await self._session.flush()
         await self._log(admin, "user.create", "user", str(user.id))
 
-        await email_sender.send(
+        background_tasks.add_task(
+            email_sender.send,
             to=email,
             subject="Your Chatfolio account has been created",
             body=(
