@@ -157,3 +157,29 @@ async def test_list_conversations_requires_auth() -> None:
     client, _ = await authed_client("dash-noauth@example.com")
     response = await client.get("/api/v1/dashboard/conversations")
     assert response.status_code == 401
+
+
+async def test_analytics_reflects_real_visits_and_defaults(
+    set_fake_llm: Callable[[str], None],
+) -> None:
+    client, owner_headers, slug = await publish_full_profile(
+        "dash-analytics-owner@example.com", set_fake_llm, "dash-analytics"
+    )
+    await client.get(f"/api/v1/public/chatfolio/{slug}")
+    await client.get(f"/api/v1/public/chatfolio/{slug}")
+
+    response = await client.get("/api/v1/dashboard/analytics", headers=owner_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["portfolio_visitors_total"] == 2
+    # No 30-days-ago period to compare against yet for a page just published in this test.
+    assert body["portfolio_visitors_delta_pct"] is None
+    assert body["ai_tokens_used"] >= 0
+    assert body["ai_tokens_monthly_quota"] == 1_000_000
+
+
+async def test_analytics_requires_auth() -> None:
+    client, _ = await authed_client("dash-analytics-noauth@example.com")
+    response = await client.get("/api/v1/dashboard/analytics")
+    assert response.status_code == 401

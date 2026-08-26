@@ -1,15 +1,15 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.core.exceptions import NotFoundError, ValidationFailedError
 from chatfolio.models.audit_log import AdminAuditLog
-from chatfolio.models.chat import ChatMessage, ChatSession
-from chatfolio.models.chatfolio import PublicChatfolio
+from chatfolio.models.chat import ChatMessage, ChatSession, RecruiterMetadata
+from chatfolio.models.chatfolio import PortfolioVisit, PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
-from chatfolio.models.profile import CandidateProfile
+from chatfolio.models.profile import DEFAULT_AI_TOKENS_MONTHLY_QUOTA, CandidateProfile
 from chatfolio.models.user import User, UserRole
 from chatfolio.workers.queue import JobQueue
 
@@ -124,11 +124,40 @@ class AdminService:
                 .select_from(UploadedCV)
                 .where(UploadedCV.status == CVStatus.FAILED)
             ),
+            "total_portfolio_visitors": await self._count(
+                select(func.count()).select_from(PortfolioVisit)
+            ),
+            "recruiters_engaged": await self._count(
+                select(func.count())
+                .select_from(RecruiterMetadata)
+                .where(
+                    or_(
+                        RecruiterMetadata.name.is_not(None),
+                        RecruiterMetadata.company.is_not(None),
+                    )
+                )
+            ),
+            "ai_tokens_used": await self._sum_ai_tokens_used(),
+            "ai_tokens_monthly_quota": await self._sum_ai_tokens_monthly_quota(),
         }
 
     async def _count(self, stmt: Select[Any]) -> int:
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
+
+    async def _sum_ai_tokens_used(self) -> int:
+        result = await self._session.execute(select(func.sum(CandidateProfile.ai_tokens_used)))
+        return int(result.scalar_one() or 0)
+
+    async def _sum_ai_tokens_monthly_quota(self) -> int:
+        # usage_limits is per-profile JSON, not a plain column — summing "quota, falling back to
+        # the platform default when a profile hasn't set one" isn't expressible as a single SQL
+        # aggregate, so it's a Python sum over admin-scale data (one profile per candidate).
+        result = await self._session.execute(select(CandidateProfile.usage_limits))
+        return sum(
+            (usage_limits or {}).get("ai_tokens_monthly_quota", DEFAULT_AI_TOKENS_MONTHLY_QUOTA)
+            for (usage_limits,) in result.all()
+        )
 
     async def _log(self, admin: User, action: str, target_type: str, target_id: str) -> None:
         self._session.add(

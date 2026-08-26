@@ -9,6 +9,7 @@ from chatfolio.schemas.chat import ChatMessageResponse
 from chatfolio.schemas.dashboard import (
     ConversationDetailResponse,
     ConversationSummaryResponse,
+    DashboardAnalyticsResponse,
     RecruiterMetadataResponse,
 )
 from chatfolio.services.dashboard_service import DashboardService
@@ -19,8 +20,9 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 def _service(session: DbSessionDep) -> DashboardService:
-    portfolio_service = PortfolioService(session, ProfileService(ProfileRepository(session)))
-    return DashboardService(session, portfolio_service)
+    profile_service = ProfileService(ProfileRepository(session))
+    portfolio_service = PortfolioService(session, profile_service)
+    return DashboardService(session, portfolio_service, profile_service)
 
 
 def _metadata_response(metadata: RecruiterMetadata | None) -> RecruiterMetadataResponse | None:
@@ -74,3 +76,16 @@ async def mark_conversation_reviewed(
 ) -> ConversationSummaryResponse:
     chat_session = await _service(session).mark_reviewed(current_user, conversation_id)
     return _to_summary(chat_session, len(chat_session.messages))
+
+
+@router.get("/analytics", response_model=DashboardAnalyticsResponse)
+async def get_analytics(
+    current_user: CurrentUserDep, session: DbSessionDep
+) -> DashboardAnalyticsResponse:
+    analytics = await _service(session).get_analytics(current_user)
+    return DashboardAnalyticsResponse(
+        portfolio_visitors_total=analytics.portfolio_visitors_total,
+        portfolio_visitors_delta_pct=analytics.portfolio_visitors_delta_pct,
+        ai_tokens_used=analytics.ai_tokens_used,
+        ai_tokens_monthly_quota=analytics.ai_tokens_monthly_quota,
+    )

@@ -397,6 +397,7 @@ POST   /api/v1/public/chat/sessions/{session_id}/messages
 GET    /api/v1/dashboard/conversations          # candidate-owned, authed
 GET    /api/v1/dashboard/conversations/{id}
 POST   /api/v1/dashboard/conversations/{id}/mark-reviewed
+GET    /api/v1/dashboard/analytics
 
 GET    /api/v1/admin/users
 GET    /api/v1/admin/chatfolios
@@ -495,6 +496,43 @@ Each phase should ship with tests before moving to the next — no phase depends
 ---
 
 ## 16. Changelog
+
+- **2026-08-26** — Step 4 of the `Required_API_Doc.md` gap-closure plan: real analytics, closing
+  §2 (candidate dashboard) and §6 (admin platform analytics, Option A — extending the existing
+  endpoint additively rather than a separate one, confirmed with the user).
+  - **New `PortfolioVisit` model** (`models/chatfolio.py`, migration `16ead3432b1e`) — one row per
+    real `GET /public/chatfolio/{slug}` call, not a single incrementing counter. Deliberate: a
+    "visitors this 30 days vs. the 30 before" delta needs two separate time windows to compare,
+    which a bare counter can't give you, and the doc itself warned against overbuilding a
+    time-series endpoint for this — an event table sized for exactly the one derived stat that
+    needs it is the middle ground. `PublicPortfolioService.record_visit` is called from
+    `GET /public/chatfolio/{slug}` as a pure additive side-effect — no response-shape change, no
+    de-duplication by visitor/IP/session (repeated refreshes count as repeated visits, documented
+    as such).
+  - **`GET /dashboard/analytics`** (new `DashboardService.get_analytics`) returns
+    `portfolio_visitors_total`, `portfolio_visitors_delta_pct` (last-30-days vs. the 30 before;
+    `null`, not `0` or a nonsensical percentage, when there's no prior-period data yet — e.g. a
+    just-published page), `ai_tokens_used`, `ai_tokens_monthly_quota`. The quota reuses the
+    Phase-14 `CandidateProfile.usage_limits` JSON stub (`usage_limits["ai_tokens_monthly_quota"]`,
+    falling back to a new `DEFAULT_AI_TOKENS_MONTHLY_QUOTA = 1_000_000` constant in
+    `models/profile.py`) rather than adding a dedicated column for one Phase-2 default value.
+  - **`GET /admin/metrics` extended additively** with `total_portfolio_visitors` (site-wide sum),
+    `recruiters_engaged` (the same name-or-company `RecruiterMetadata` query the public
+    `recruiter_count` field already used, just without the per-chatfolio filter — genuinely the
+    same query shape, not a new design), `ai_tokens_used` (SQL `sum()` across all
+    `CandidateProfile` rows), `ai_tokens_monthly_quota` (a Python-side sum since summing "quota,
+    falling back to the default per-profile" isn't expressible as a single SQL aggregate over a
+    JSON column — fine at admin scale, one profile per candidate). Every existing field in
+    `AdminMetricsResponse` is untouched.
+  - Verified live against the real running stack: a fresh candidate's analytics started at
+    `{"portfolio_visitors_total": 0, "portfolio_visitors_delta_pct": null, "ai_tokens_used": 0,
+    "ai_tokens_monthly_quota": 1000000}`; after publishing and hitting the real public page 3
+    times, `portfolio_visitors_total` was exactly `3` and `ai_tokens_used` reflected the real
+    DeepSeek section-generation cost (`387`), delta still correctly `null` (no 30-days-ago data to
+    compare against). Full suite (112 tests, 2 new) plus `ruff`/`mypy` clean. Both reference docs
+    updated — `ADMIN_PANEL_UI_REFERENCE.md` §7 gained the full `GET /dashboard/analytics` section,
+    §8's `GET /admin/metrics` sample updated with the four new fields (replacing the
+    forward-looking "coming soon" note added in the previous changelog entry, now that it's live).
 
 - **2026-08-26** — Step 3 of the `Required_API_Doc.md` gap-closure plan: candidate account
   settings (`§1` of that doc) — change password, and a verify-first change-email flow, backing

@@ -559,6 +559,30 @@ only new messages carry it on both).
 No body. Returns the summary shape with `reviewed_by_candidate: true`. Purely a candidate-side
 bookkeeping flag ("I've read this") — has no effect on anything else.
 
+### `GET /api/v1/dashboard/analytics`
+
+Powers the "Portfolio visitors" and "AI tokens used" stats on the dashboard home
+(`src/app/dashboard/page.tsx`), previously hardcoded to static numbers.
+
+```jsonc
+{
+  "portfolio_visitors_total": 1284,
+  "portfolio_visitors_delta_pct": 18,       // null if there's no prior 30-day period yet
+  "ai_tokens_used": 412000,
+  "ai_tokens_monthly_quota": 1000000
+}
+```
+`portfolio_visitors_total` is a real page-view count (one row per `GET
+/public/chatfolio/{slug}` call, recorded server-side) — refreshing the public page repeatedly
+does count as multiple visits, there's no de-duplication by visitor/IP/session today.
+`portfolio_visitors_delta_pct` compares the last 30 days against the 30 days before that; it's
+`null` (not `0` or a huge negative number) when there's no prior-period data to compare against
+yet — e.g. a page published less than 30 days ago. Render that as "not enough data yet," not as
+a 0% change. `ai_tokens_used` is cumulative since signup, not reset monthly (see
+`BACKEND_PLAN.md`'s changelog for why); `ai_tokens_monthly_quota` defaults to `1,000,000` for
+every candidate today — there's no plan/tier system that varies it yet. No pagination — a single
+point-in-time snapshot, same spirit as the admin metrics endpoint below.
+
 ---
 
 ## 8. Admin-only views
@@ -586,15 +610,19 @@ it regardless.
 ```jsonc
 { "total_users": 42, "total_candidates": 40, "published_chatfolios": 18,
   "total_chat_sessions": 310, "total_chat_messages": 1204, "flagged_chat_sessions": 3,
-  "cv_parse_success_count": 55, "cv_parse_failed_count": 4 }
+  "cv_parse_success_count": 55, "cv_parse_failed_count": 4,
+  "total_portfolio_visitors": 18432, "recruiters_engaged": 612,
+  "ai_tokens_used": 4200000, "ai_tokens_monthly_quota": 10000000 }
 ```
 Plain point-in-time counts, no time-series/history — poll on dashboard load, not a live feed.
-
-**Coming soon, not in the response yet**: the backend now tracks real cumulative LLM token usage
-per candidate (`CandidateProfile.ai_tokens_used`, incremented on every real section-generation,
-chat, and CV-parsing completion) as groundwork for `Required_API_Doc.md` §2/§6's analytics
-endpoints. Nothing reads or exposes this field through any endpoint yet — don't build UI against
-it until a later doc update adds it to `GET /dashboard/analytics` and this endpoint.
+`total_portfolio_visitors` is a site-wide sum of every candidate's real page views (same
+`PortfolioVisit` rows §7's `GET /dashboard/analytics` scopes per-candidate). `recruiters_engaged`
+is the site-wide version of the public portfolio's `recruiter_count` field — every chat session
+across every candidate where a recruiter volunteered at least their name or company, not scoped
+to one chatfolio. `ai_tokens_used`/`ai_tokens_monthly_quota` are sums of every candidate's own
+values from §7 — `ai_tokens_used` cumulative since signup (not a monthly figure despite the
+`*_monthly_quota` field it's compared against), `ai_tokens_monthly_quota` currently just
+`1,000,000 × total_candidates` since every candidate has the same default quota today.
 
 ### `GET /api/v1/admin/cv-jobs/failed?limit=20&offset=0`
 ```jsonc

@@ -50,6 +50,7 @@ async def get_public_chatfolio(
     skills = await service.list_children(Skill, chatfolio.profile_id)
     education = await service.list_children(Education, chatfolio.profile_id)
     recruiter_count = await service.count_identified_recruiters(chatfolio.id)
+    await service.record_visit(chatfolio.id)
 
     return PublicChatfolioResponse(
         slug=chatfolio.slug,

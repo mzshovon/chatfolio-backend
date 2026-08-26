@@ -129,7 +129,10 @@ async def test_list_chatfolios_filters_by_published(set_fake_llm: Any) -> None:
 
 
 async def test_metrics_reflect_real_counts(set_fake_llm: Any) -> None:
-    await publish_full_profile("admin-metrics-owner@example.com", set_fake_llm, "admin-metrics-1")
+    client, _headers, slug = await publish_full_profile(
+        "admin-metrics-owner@example.com", set_fake_llm, "admin-metrics-1"
+    )
+    await client.get(f"/api/v1/public/chatfolio/{slug}")  # records a PortfolioVisit
     admin_client, admin_headers = await _admin_client("admin-metrics-admin@example.com")
 
     response = await admin_client.get("/api/v1/admin/metrics", headers=admin_headers)
@@ -137,6 +140,10 @@ async def test_metrics_reflect_real_counts(set_fake_llm: Any) -> None:
     body = response.json()
     assert body["published_chatfolios"] >= 1
     assert body["total_users"] >= 2
+    assert body["total_portfolio_visitors"] >= 1
+    assert body["ai_tokens_monthly_quota"] >= 1_000_000
+    assert "recruiters_engaged" in body
+    assert "ai_tokens_used" in body
 
 
 async def test_list_failed_cv_jobs_and_retry(spy_job_queue: SpyJobQueue) -> None:

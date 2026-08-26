@@ -15,6 +15,12 @@ class ProfileStatus(StrEnum):
     APPROVED = "approved"
 
 
+# Applied when a profile's `usage_limits` JSON has no "ai_tokens_monthly_quota" key of its own
+# (i.e. every profile today — nothing sets this yet) rather than adding a dedicated column for a
+# single Phase-2 default.
+DEFAULT_AI_TOKENS_MONTHLY_QUOTA = 1_000_000
+
+
 class CandidateProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "candidate_profiles"
 

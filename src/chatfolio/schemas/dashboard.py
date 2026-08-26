@@ -30,3 +30,12 @@ class ConversationSummaryResponse(BaseModel):
 
 class ConversationDetailResponse(ConversationSummaryResponse):
     messages: list[ChatMessageResponse]
+
+
+class DashboardAnalyticsResponse(BaseModel):
+    portfolio_visitors_total: int
+    # null when there's no prior 30-day period to compare against yet (e.g. a newly published
+    # page) — don't render this as "0%" or "-100%", show "not enough data yet" instead.
+    portfolio_visitors_delta_pct: int | None
+    ai_tokens_used: int
+    ai_tokens_monthly_quota: int

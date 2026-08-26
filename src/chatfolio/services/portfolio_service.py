@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.core.exceptions import ConflictError, ValidationFailedError
 from chatfolio.models.chat import ChatSession, RecruiterMetadata
-from chatfolio.models.chatfolio import PublicChatfolio
+from chatfolio.models.chatfolio import PortfolioVisit, PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.mixins import ProfileChildMixin
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
@@ -183,3 +183,7 @@ class PublicPortfolioService:
             )
         )
         return result.scalar_one()
+
+    async def record_visit(self, chatfolio_id: uuid.UUID) -> None:
+        self._session.add(PortfolioVisit(chatfolio_id=chatfolio_id))
+        await self._session.flush()

@@ -35,3 +35,7 @@ class AdminMetricsResponse(BaseModel):
     flagged_chat_sessions: int
     cv_parse_success_count: int
     cv_parse_failed_count: int
+    total_portfolio_visitors: int
+    recruiters_engaged: int
+    ai_tokens_used: int
+    ai_tokens_monthly_quota: int
