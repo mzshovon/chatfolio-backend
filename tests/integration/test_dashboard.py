@@ -26,7 +26,7 @@ def _intent_response(intent: str, **context: str) -> str:
 
 async def _send_recruiter_message(slug: str, recruiter_email: str, content: str) -> None:
     client, _ = await authed_client(recruiter_email)
-    session_id = (await client.post(f"/v1/public/chat/{slug}/sessions")).json()["session_id"]
+    session_id = (await client.post(f"/api/v1/public/chat/{slug}/sessions")).json()["session_id"]
 
     app.dependency_overrides[get_llm_provider_factory] = lambda: FakeLLMFactory(
         _intent_response("general_introduction", company="Acme Corp")
@@ -34,7 +34,7 @@ async def _send_recruiter_message(slug: str, recruiter_email: str, content: str)
     app.dependency_overrides[get_vector_store] = lambda: FakeVectorStore(query_results=[])
     try:
         await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages", json={"content": content}
+            f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": content}
         )
     finally:
         app.dependency_overrides.pop(get_llm_provider_factory, None)
@@ -50,7 +50,7 @@ async def test_list_conversations_returns_owned_session_with_message_count(
     await _send_recruiter_message(slug, "dash-list-recruiter@example.com", "Hi there!")
 
     owner_client, _ = await authed_client("dash-list-owner@example.com")
-    response = await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+    response = await owner_client.get("/api/v1/dashboard/conversations", headers=owner_headers)
 
     assert response.status_code == 200
     conversations = response.json()
@@ -68,10 +68,10 @@ async def test_list_conversations_excludes_sessions_with_no_messages(
     )
     recruiter_client, _ = await authed_client("dash-empty-recruiter@example.com")
     # Recruiter opens the chat widget (creates a session) but never actually sends a message.
-    await recruiter_client.post(f"/v1/public/chat/{slug}/sessions")
+    await recruiter_client.post(f"/api/v1/public/chat/{slug}/sessions")
 
     owner_client, _ = await authed_client("dash-empty-owner@example.com")
-    response = await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+    response = await owner_client.get("/api/v1/dashboard/conversations", headers=owner_headers)
 
     assert response.status_code == 200
     assert response.json() == []
@@ -87,12 +87,12 @@ async def test_get_conversation_returns_full_message_history(
 
     owner_client, _ = await authed_client("dash-detail-owner@example.com")
     conversations = (
-        await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+        await owner_client.get("/api/v1/dashboard/conversations", headers=owner_headers)
     ).json()
     conversation_id = conversations[0]["id"]
 
     response = await owner_client.get(
-        f"/v1/dashboard/conversations/{conversation_id}", headers=owner_headers
+        f"/api/v1/dashboard/conversations/{conversation_id}", headers=owner_headers
     )
 
     assert response.status_code == 200
@@ -111,12 +111,12 @@ async def test_mark_conversation_reviewed_sets_flag(set_fake_llm: Callable[[str]
 
     owner_client, _ = await authed_client("dash-review-owner@example.com")
     conversations = (
-        await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+        await owner_client.get("/api/v1/dashboard/conversations", headers=owner_headers)
     ).json()
     conversation_id = conversations[0]["id"]
 
     response = await owner_client.post(
-        f"/v1/dashboard/conversations/{conversation_id}/mark-reviewed", headers=owner_headers
+        f"/api/v1/dashboard/conversations/{conversation_id}/mark-reviewed", headers=owner_headers
     )
 
     assert response.status_code == 200
@@ -133,27 +133,27 @@ async def test_conversation_not_visible_to_other_candidate(
 
     owner_client, owner_headers = await authed_client("dash-isolation-owner@example.com")
     conversations = (
-        await owner_client.get("/v1/dashboard/conversations", headers=owner_headers)
+        await owner_client.get("/api/v1/dashboard/conversations", headers=owner_headers)
     ).json()
     conversation_id = conversations[0]["id"]
 
     other_client, other_headers = await authed_client("dash-isolation-other@example.com")
     response = await other_client.get(
-        f"/v1/dashboard/conversations/{conversation_id}", headers=other_headers
+        f"/api/v1/dashboard/conversations/{conversation_id}", headers=other_headers
     )
 
     assert response.status_code == 404
-    other_list = await other_client.get("/v1/dashboard/conversations", headers=other_headers)
+    other_list = await other_client.get("/api/v1/dashboard/conversations", headers=other_headers)
     assert other_list.json() == []
 
 
 async def test_get_unknown_conversation_returns_404() -> None:
     client, headers = await authed_client("dash-unknown-owner@example.com")
-    response = await client.get(f"/v1/dashboard/conversations/{uuid.uuid4()}", headers=headers)
+    response = await client.get(f"/api/v1/dashboard/conversations/{uuid.uuid4()}", headers=headers)
     assert response.status_code == 404
 
 
 async def test_list_conversations_requires_auth() -> None:
     client, _ = await authed_client("dash-noauth@example.com")
-    response = await client.get("/v1/dashboard/conversations")
+    response = await client.get("/api/v1/dashboard/conversations")
     assert response.status_code == 401

@@ -80,17 +80,17 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, handle_rate_limit_exceeded)
     app.add_middleware(SlowAPIMiddleware)
 
-    app.include_router(health_router, prefix="/v1")
-    app.include_router(auth_router, prefix="/v1")
-    app.include_router(profiles_router, prefix="/v1")
-    app.include_router(cv_router, prefix="/v1")
-    app.include_router(sections_router, prefix="/v1")
-    app.include_router(portfolio_settings_router, prefix="/v1")
-    app.include_router(custom_domain_router, prefix="/v1")
-    app.include_router(public_portfolio_router, prefix="/v1")
-    app.include_router(public_chat_router, prefix="/v1")
-    app.include_router(dashboard_router, prefix="/v1")
-    app.include_router(admin_router, prefix="/v1")
+    app.include_router(health_router, prefix="/api/v1")
+    app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(profiles_router, prefix="/api/v1")
+    app.include_router(cv_router, prefix="/api/v1")
+    app.include_router(sections_router, prefix="/api/v1")
+    app.include_router(portfolio_settings_router, prefix="/api/v1")
+    app.include_router(custom_domain_router, prefix="/api/v1")
+    app.include_router(public_portfolio_router, prefix="/api/v1")
+    app.include_router(public_chat_router, prefix="/api/v1")
+    app.include_router(dashboard_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
 
     return app
 

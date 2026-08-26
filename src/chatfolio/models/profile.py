@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, Date, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Date, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,6 +37,12 @@ class CandidateProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # CandidateProfile every call, so no new query is needed to wire enforcement in later.
     plan: Mapped[str] = mapped_column(String(50), default="free")
     usage_limits: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    # Cumulative since signup, not reset monthly — see BACKEND_PLAN.md's changelog entry on
+    # token-usage tracking for why a real monthly reset was deliberately deferred rather than
+    # guessed at. Incremented by every real LLM completion for this profile (generation, chat
+    # intent classification + reply, CV extraction) via each call site's
+    # `LLMCompletion.tokens_used`.
+    ai_tokens_used: Mapped[int] = mapped_column(Integer, default=0)
 
     experiences: Mapped[list["Experience"]] = relationship(
         back_populates="profile",

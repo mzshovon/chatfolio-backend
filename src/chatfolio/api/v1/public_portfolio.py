@@ -32,7 +32,9 @@ async def get_public_chatfolio(
     if chatfolio is None:
         redirect_slug = await service.find_redirect_target(slug)
         if redirect_slug is not None:
-            return RedirectResponse(url=f"/v1/public/chatfolio/{redirect_slug}", status_code=307)
+            return RedirectResponse(
+                url=f"/api/v1/public/chatfolio/{redirect_slug}", status_code=307
+            )
         raise NotFoundError("This Chatfolio is not available.")
 
     profile = await service.get_profile(chatfolio.profile_id)

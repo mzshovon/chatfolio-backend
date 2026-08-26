@@ -4,7 +4,7 @@ import structlog
 
 from chatfolio.config.settings import LLMTask
 from chatfolio.core.exceptions import ServiceUnavailableError
-from chatfolio.llm.base import LLMFactory
+from chatfolio.llm.base import LLMCompletion, LLMFactory
 from chatfolio.llm.prompts.section_generation import SECTION_GENERATION_SYSTEM_PROMPTS
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.portfolio_section import (
@@ -59,8 +59,11 @@ class GenerationService:
     async def _generate(
         self, user: User, section_type: SectionType, existing: PortfolioSection | None = None
     ) -> PortfolioSection:
+        profile = await self._profile_service.get_or_create_for_user(user)
         context = await self._build_context(user)
-        content = await self._complete(section_type, context)
+        completion = await self._complete(section_type, context)
+        content = completion.content.strip()
+        profile.ai_tokens_used += completion.tokens_used
 
         if existing is not None:
             return await self._profile_service.update_child(
@@ -84,10 +87,10 @@ class GenerationService:
         )
         return await self._profile_service.add_child(user, section)
 
-    async def _complete(self, section_type: SectionType, context: str) -> str:
+    async def _complete(self, section_type: SectionType, context: str) -> LLMCompletion:
         try:
             provider = self._llm_factory.for_task(LLMTask.GENERATION)
-            response = await provider.complete(
+            return await provider.complete(
                 system=SECTION_GENERATION_SYSTEM_PROMPTS[section_type],
                 messages=[{"role": "user", "content": context}],
             )
@@ -96,7 +99,6 @@ class GenerationService:
             raise ServiceUnavailableError(
                 "AI section generation is not available right now. Please try again later."
             ) from exc
-        return response.strip()
 
     async def _build_context(self, user: User) -> str:
         profile = await self._profile_service.get_or_create_for_user(user)

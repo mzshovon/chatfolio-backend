@@ -91,13 +91,13 @@ async def _create_failed_cv(profile_email: str) -> uuid.UUID:
 
 async def test_admin_endpoints_reject_non_admin_users() -> None:
     client, headers = await authed_client("admin-reject@example.com")
-    response = await client.get("/v1/admin/users", headers=headers)
+    response = await client.get("/api/v1/admin/users", headers=headers)
     assert response.status_code == 403
 
 
 async def test_admin_endpoints_require_auth() -> None:
     client, _ = await authed_client("admin-noauth@example.com")
-    response = await client.get("/v1/admin/users")
+    response = await client.get("/api/v1/admin/users")
     assert response.status_code == 401
 
 
@@ -105,7 +105,7 @@ async def test_list_users_returns_all_registered_users() -> None:
     await authed_client("admin-list-candidate@example.com")
     admin_client, admin_headers = await _admin_client("admin-list-admin@example.com")
 
-    response = await admin_client.get("/v1/admin/users", headers=admin_headers)
+    response = await admin_client.get("/api/v1/admin/users", headers=admin_headers)
     assert response.status_code == 200
     emails = {u["email"] for u in response.json()}
     assert "admin-list-candidate@example.com" in emails
@@ -119,7 +119,7 @@ async def test_list_chatfolios_filters_by_published(set_fake_llm: Any) -> None:
     admin_client, admin_headers = await _admin_client("admin-chatfolio-admin@example.com")
 
     published = await admin_client.get(
-        "/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
+        "/api/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
     )
     assert published.status_code == 200
     slugs = {cf["slug"] for cf in published.json()}
@@ -132,7 +132,7 @@ async def test_metrics_reflect_real_counts(set_fake_llm: Any) -> None:
     await publish_full_profile("admin-metrics-owner@example.com", set_fake_llm, "admin-metrics-1")
     admin_client, admin_headers = await _admin_client("admin-metrics-admin@example.com")
 
-    response = await admin_client.get("/v1/admin/metrics", headers=admin_headers)
+    response = await admin_client.get("/api/v1/admin/metrics", headers=admin_headers)
     assert response.status_code == 200
     body = response.json()
     assert body["published_chatfolios"] >= 1
@@ -144,13 +144,11 @@ async def test_list_failed_cv_jobs_and_retry(spy_job_queue: SpyJobQueue) -> None
     cv_id = await _create_failed_cv("admin-cv-owner@example.com")
     admin_client, admin_headers = await _admin_client("admin-cv-admin@example.com")
 
-    failed = await admin_client.get("/v1/admin/cv-jobs/failed", headers=admin_headers)
+    failed = await admin_client.get("/api/v1/admin/cv-jobs/failed", headers=admin_headers)
     assert failed.status_code == 200
     assert any(job["id"] == str(cv_id) for job in failed.json())
 
-    retry = await admin_client.post(
-        f"/v1/admin/cv-jobs/{cv_id}/retry", headers=admin_headers
-    )
+    retry = await admin_client.post(f"/api/v1/admin/cv-jobs/{cv_id}/retry", headers=admin_headers)
     assert retry.status_code == 200
     assert retry.json()["status"] == "pending"
     assert ("parse_cv_job", (str(cv_id),)) in spy_job_queue.enqueued
@@ -173,7 +171,9 @@ async def test_retry_non_failed_cv_job_is_rejected() -> None:
         cv_id = cv.id
 
     admin_client, admin_headers = await _admin_client("admin-cv-notfailed-admin@example.com")
-    response = await admin_client.post(f"/v1/admin/cv-jobs/{cv_id}/retry", headers=admin_headers)
+    response = await admin_client.post(
+        f"/api/v1/admin/cv-jobs/{cv_id}/retry", headers=admin_headers
+    )
     assert response.status_code == 422
 
 
@@ -184,12 +184,12 @@ async def test_unpublish_chatfolio_writes_audit_log(set_fake_llm: Any) -> None:
     admin_client, admin_headers = await _admin_client("admin-unpublish-admin@example.com")
 
     chatfolios = await admin_client.get(
-        "/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
+        "/api/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
     )
     chatfolio_id = next(cf["id"] for cf in chatfolios.json() if cf["slug"] == slug)
 
     response = await admin_client.post(
-        f"/v1/admin/chatfolios/{chatfolio_id}/unpublish", headers=admin_headers
+        f"/api/v1/admin/chatfolios/{chatfolio_id}/unpublish", headers=admin_headers
     )
     assert response.status_code == 200
     assert response.json()["is_published"] is False
@@ -215,12 +215,12 @@ async def test_public_chatfolio_no_longer_reachable_after_admin_unpublish(
     admin_client, admin_headers = await _admin_client("admin-unpublish-effect-admin@example.com")
 
     chatfolios = await admin_client.get(
-        "/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
+        "/api/v1/admin/chatfolios", params={"is_published": True}, headers=admin_headers
     )
     chatfolio_id = next(cf["id"] for cf in chatfolios.json() if cf["slug"] == slug)
     await admin_client.post(
-        f"/v1/admin/chatfolios/{chatfolio_id}/unpublish", headers=admin_headers
+        f"/api/v1/admin/chatfolios/{chatfolio_id}/unpublish", headers=admin_headers
     )
 
-    response = await owner_client.get(f"/v1/public/chatfolio/{slug}")
+    response = await owner_client.get(f"/api/v1/public/chatfolio/{slug}")
     assert response.status_code == 404

@@ -89,7 +89,7 @@ async def _fetch_recruiter_metadata(session_id: uuid.UUID) -> RecruiterMetadata 
 
 async def _start_session(slug: str, recruiter_email: str) -> tuple[AsyncClient, str]:
     client, _ = await authed_client(recruiter_email)
-    session_id = (await client.post(f"/v1/public/chat/{slug}/sessions")).json()["session_id"]
+    session_id = (await client.post(f"/api/v1/public/chat/{slug}/sessions")).json()["session_id"]
     return client, session_id
 
 
@@ -101,14 +101,14 @@ async def test_start_session_on_published_chatfolio_returns_session_id(
     )
     client, _ = await authed_client("chat-start-recruiter@example.com")
 
-    response = await client.post(f"/v1/public/chat/{slug}/sessions")
+    response = await client.post(f"/api/v1/public/chat/{slug}/sessions")
     assert response.status_code == 200
     assert response.json()["session_id"]
 
 
 async def test_start_session_on_unknown_slug_returns_404() -> None:
     client, _ = await authed_client("chat-unknown-recruiter@example.com")
-    response = await client.post("/v1/public/chat/does-not-exist/sessions")
+    response = await client.post("/api/v1/public/chat/does-not-exist/sessions")
     assert response.status_code == 404
 
 
@@ -125,7 +125,7 @@ async def test_informational_intent_without_retrieval_skips_generation_and_falls
     _set_vector_store(FakeVectorStore(query_results=[]))
     try:
         response = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages",
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "Do you know Rust?"},
         )
     finally:
@@ -170,7 +170,7 @@ async def test_informational_intent_with_retrieval_generates_grounded_reply(
     )
     try:
         response = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages",
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "Tell me about your experience."},
         )
     finally:
@@ -200,7 +200,7 @@ async def test_general_introduction_generates_reply_even_without_retrieval(
     _set_vector_store(FakeVectorStore(query_results=[]))
     try:
         response = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi!"}
+            f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi!"}
         )
     finally:
         _clear_llm_factory()
@@ -230,7 +230,7 @@ async def test_messages_are_persisted_with_roles_and_intent(
     _set_vector_store(FakeVectorStore(query_results=[]))
     try:
         response = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages",
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "How can I reach you?"},
         )
     finally:
@@ -270,7 +270,7 @@ async def test_recruiter_context_merges_first_mention_wins(
             )
         )
         await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages",
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "Hi, I'm hiring for Acme Corp."},
         )
 
@@ -285,7 +285,7 @@ async def test_recruiter_context_merges_first_mention_wins(
             )
         )
         await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages",
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
             json={"content": "Actually, nevermind."},
         )
     finally:
@@ -311,10 +311,10 @@ async def test_rapid_messages_trigger_cooldown(set_fake_llm: Callable[[str], Non
     _set_vector_store(FakeVectorStore(query_results=[]))
     try:
         first = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi"}
+            f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi"}
         )
         second = await client.post(
-            f"/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi again"}
+            f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": "Hi again"}
         )
     finally:
         _clear_llm_factory()
@@ -327,7 +327,7 @@ async def test_rapid_messages_trigger_cooldown(set_fake_llm: Callable[[str], Non
 async def test_send_message_to_unknown_session_returns_404() -> None:
     client, _ = await authed_client("chat-unknown-session-recruiter@example.com")
     response = await client.post(
-        f"/v1/public/chat/sessions/{uuid.uuid4()}/messages", json={"content": "hi"}
+        f"/api/v1/public/chat/sessions/{uuid.uuid4()}/messages", json={"content": "hi"}
     )
     assert response.status_code == 404
 
@@ -341,9 +341,9 @@ async def test_send_message_after_unpublish_returns_404(
     owner_client, _ = await authed_client("chat-unpublish-owner@example.com")
     client, session_id = await _start_session(slug, "chat-unpublish-recruiter@example.com")
 
-    await owner_client.post("/v1/portfolio-settings/unpublish", headers=owner_headers)
+    await owner_client.post("/api/v1/portfolio-settings/unpublish", headers=owner_headers)
 
     response = await client.post(
-        f"/v1/public/chat/sessions/{session_id}/messages", json={"content": "still there?"}
+        f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": "still there?"}
     )
     assert response.status_code == 404

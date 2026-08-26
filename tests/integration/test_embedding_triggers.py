@@ -39,8 +39,8 @@ async def spy_job_queue() -> AsyncGenerator[SpyJobQueue]:
 async def _authed_client(email: str) -> tuple[AsyncClient, dict[str, str]]:
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
     password = "supersecret123"
-    await client.post("/v1/auth/register", json={"email": email, "password": password})
-    login = await client.post("/v1/auth/login", json={"email": email, "password": password})
+    await client.post("/api/v1/auth/register", json={"email": email, "password": password})
+    login = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     token = login.json()["access_token"]
     return client, {"Authorization": f"Bearer {token}"}
 
@@ -48,7 +48,7 @@ async def _authed_client(email: str) -> tuple[AsyncClient, dict[str, str]]:
 async def test_creating_experience_enqueues_embed_job(spy_job_queue: SpyJobQueue) -> None:
     client, headers = await _authed_client("embed-experience-owner@example.com")
     response = await client.post(
-        "/v1/profiles/me/experience",
+        "/api/v1/profiles/me/experience",
         headers=headers,
         json={"company": "Acme", "role": "Backend Engineer", "description": "Built APIs."},
     )
@@ -68,7 +68,7 @@ async def test_creating_experience_enqueues_embed_job(spy_job_queue: SpyJobQueue
 async def test_updating_experience_re_enqueues_embed_job(spy_job_queue: SpyJobQueue) -> None:
     client, headers = await _authed_client("embed-experience-update-owner@example.com")
     create_response = await client.post(
-        "/v1/profiles/me/experience",
+        "/api/v1/profiles/me/experience",
         headers=headers,
         json={"company": "Acme", "role": "Engineer"},
     )
@@ -76,7 +76,7 @@ async def test_updating_experience_re_enqueues_embed_job(spy_job_queue: SpyJobQu
     spy_job_queue.enqueued.clear()
 
     await client.patch(
-        f"/v1/profiles/me/experience/{experience_id}",
+        f"/api/v1/profiles/me/experience/{experience_id}",
         headers=headers,
         json={"role": "Staff Engineer"},
     )
@@ -91,14 +91,14 @@ async def test_deleting_experience_deletes_embedding(
 ) -> None:
     client, headers = await _authed_client("embed-experience-delete-owner@example.com")
     create_response = await client.post(
-        "/v1/profiles/me/experience",
+        "/api/v1/profiles/me/experience",
         headers=headers,
         json={"company": "Acme", "role": "Engineer"},
     )
     experience_id = create_response.json()["id"]
 
     delete_response = await client.delete(
-        f"/v1/profiles/me/experience/{experience_id}", headers=headers
+        f"/api/v1/profiles/me/experience/{experience_id}", headers=headers
     )
     assert delete_response.status_code == 204
     assert spy_vector_store.deleted_ids == [f"experience:{experience_id}"]
@@ -108,11 +108,11 @@ async def test_approving_section_enqueues_embed_job(spy_job_queue: SpyJobQueue) 
     app.dependency_overrides[get_llm_provider_factory] = lambda: FakeLLMFactory("Generated intro.")
     try:
         client, headers = await _authed_client("embed-section-owner@example.com")
-        sections = (await client.get("/v1/sections", headers=headers)).json()
+        sections = (await client.get("/api/v1/sections", headers=headers)).json()
         intro = next(s for s in sections if s["section_type"] == "intro")
         spy_job_queue.enqueued.clear()
 
-        response = await client.post(f"/v1/sections/{intro['id']}/approve", headers=headers)
+        response = await client.post(f"/api/v1/sections/{intro['id']}/approve", headers=headers)
         assert response.status_code == 200
 
         assert len(spy_job_queue.enqueued) == 1
@@ -131,12 +131,12 @@ async def test_editing_approved_section_deletes_stale_embedding(
     app.dependency_overrides[get_llm_provider_factory] = lambda: FakeLLMFactory("Generated intro.")
     try:
         client, headers = await _authed_client("embed-section-edit-owner@example.com")
-        sections = (await client.get("/v1/sections", headers=headers)).json()
+        sections = (await client.get("/api/v1/sections", headers=headers)).json()
         intro = next(s for s in sections if s["section_type"] == "intro")
-        await client.post(f"/v1/sections/{intro['id']}/approve", headers=headers)
+        await client.post(f"/api/v1/sections/{intro['id']}/approve", headers=headers)
 
         await client.patch(
-            f"/v1/sections/{intro['id']}", headers=headers, json={"content": "edited"}
+            f"/api/v1/sections/{intro['id']}", headers=headers, json={"content": "edited"}
         )
 
         assert spy_vector_store.deleted_ids == [f"portfolio_section:{intro['id']}"]

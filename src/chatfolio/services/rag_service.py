@@ -54,19 +54,21 @@ class RAGService:
         self._llm_factory = llm_factory
         self._threshold = similarity_threshold
 
-    async def classify_and_extract(self, message: str) -> tuple[RecruiterIntent, dict[str, str]]:
+    async def classify_and_extract(
+        self, message: str
+    ) -> tuple[RecruiterIntent, dict[str, str], int]:
         try:
             provider = self._llm_factory.for_task(LLMTask.INTENT)
-            response = await provider.complete(
+            completion = await provider.complete(
                 system=INTENT_CLASSIFICATION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": message}],
                 json_mode=True,
             )
-            data = json.loads(response)
+            data = json.loads(completion.content)
             intent = RecruiterIntent(data.get("intent", "unknown"))
         except Exception:
             logger.warning("chat.intent_classification_failed", exc_info=True)
-            return RecruiterIntent.UNKNOWN, {}
+            return RecruiterIntent.UNKNOWN, {}, 0
 
         raw_context = data.get("recruiter_context") or {}
         context = {
@@ -74,7 +76,7 @@ class RAGService:
             for field in RECRUITER_CONTEXT_FIELDS
             if isinstance(raw_context.get(field), str) and raw_context[field].strip()
         }
-        return intent, context
+        return intent, context, completion.tokens_used
 
     async def retrieve(
         self, profile_id: uuid.UUID, message: str, n_results: int = 5
@@ -99,9 +101,9 @@ class RAGService:
         history: list[Message],
         user_message: str,
         intent: RecruiterIntent,
-    ) -> str:
+    ) -> tuple[str, int]:
         if intent in INFORMATIONAL_INTENTS and not retrieved:
-            return CHAT_FALLBACK_RESPONSE
+            return CHAT_FALLBACK_RESPONSE, 0
 
         if not retrieved:
             logger.warning(
@@ -122,7 +124,7 @@ class RAGService:
 
         try:
             provider = self._llm_factory.for_task(LLMTask.CHAT)
-            response = await provider.complete(
+            completion = await provider.complete(
                 system=system, messages=[*history, {"role": "user", "content": user_message}]
             )
         except Exception as exc:
@@ -131,4 +133,4 @@ class RAGService:
                 "Chat is temporarily unavailable. Please try again shortly."
             ) from exc
 
-        return response.strip()
+        return completion.content.strip(), completion.tokens_used

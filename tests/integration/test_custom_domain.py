@@ -25,24 +25,30 @@ async def custom_domains_enabled() -> AsyncGenerator[None]:
 async def test_domain_endpoints_disabled_by_default() -> None:
     client, headers = await authed_client("domain-disabled@example.com")
 
-    assert (await client.get("/v1/portfolio-settings/domain", headers=headers)).status_code == 404
+    assert (
+        await client.get("/api/v1/portfolio-settings/domain", headers=headers)
+    ).status_code == 404
     post = await client.post(
-        "/v1/portfolio-settings/domain", headers=headers, json={"domain": "candidate.example.com"}
+        "/api/v1/portfolio-settings/domain",
+        headers=headers,
+        json={"domain": "candidate.example.com"},
     )
     assert post.status_code == 404
     assert (
-        await client.delete("/v1/portfolio-settings/domain", headers=headers)
+        await client.delete("/api/v1/portfolio-settings/domain", headers=headers)
     ).status_code == 404
 
 
 async def test_add_get_remove_domain_when_enabled(custom_domains_enabled: None) -> None:
     client, headers = await authed_client("domain-crud@example.com")
 
-    missing = await client.get("/v1/portfolio-settings/domain", headers=headers)
+    missing = await client.get("/api/v1/portfolio-settings/domain", headers=headers)
     assert missing.status_code == 404
 
     add = await client.post(
-        "/v1/portfolio-settings/domain", headers=headers, json={"domain": "candidate.example.com"}
+        "/api/v1/portfolio-settings/domain",
+        headers=headers,
+        json={"domain": "candidate.example.com"},
     )
     assert add.status_code == 201
     body = add.json()
@@ -50,14 +56,14 @@ async def test_add_get_remove_domain_when_enabled(custom_domains_enabled: None) 
     assert body["is_verified"] is False
     assert len(body["verification_token"]) == 32
 
-    fetched = await client.get("/v1/portfolio-settings/domain", headers=headers)
+    fetched = await client.get("/api/v1/portfolio-settings/domain", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["domain"] == "candidate.example.com"
 
-    deleted = await client.delete("/v1/portfolio-settings/domain", headers=headers)
+    deleted = await client.delete("/api/v1/portfolio-settings/domain", headers=headers)
     assert deleted.status_code == 204
 
-    gone = await client.get("/v1/portfolio-settings/domain", headers=headers)
+    gone = await client.get("/api/v1/portfolio-settings/domain", headers=headers)
     assert gone.status_code == 404
 
 
@@ -66,12 +72,16 @@ async def test_domain_already_taken_returns_conflict(custom_domains_enabled: Non
     client_b, headers_b = await authed_client("domain-taken-b@example.com")
 
     first = await client_a.post(
-        "/v1/portfolio-settings/domain", headers=headers_a, json={"domain": "shared.example.com"}
+        "/api/v1/portfolio-settings/domain",
+        headers=headers_a,
+        json={"domain": "shared.example.com"},
     )
     assert first.status_code == 201
 
     second = await client_b.post(
-        "/v1/portfolio-settings/domain", headers=headers_b, json={"domain": "shared.example.com"}
+        "/api/v1/portfolio-settings/domain",
+        headers=headers_b,
+        json={"domain": "shared.example.com"},
     )
     assert second.status_code == 409
 
@@ -80,20 +90,20 @@ async def test_adding_domain_replaces_previous_one(custom_domains_enabled: None)
     client, headers = await authed_client("domain-replace@example.com")
 
     await client.post(
-        "/v1/portfolio-settings/domain", headers=headers, json={"domain": "first.example.com"}
+        "/api/v1/portfolio-settings/domain", headers=headers, json={"domain": "first.example.com"}
     )
     second = await client.post(
-        "/v1/portfolio-settings/domain", headers=headers, json={"domain": "second.example.com"}
+        "/api/v1/portfolio-settings/domain", headers=headers, json={"domain": "second.example.com"}
     )
     assert second.status_code == 201
 
-    fetched = await client.get("/v1/portfolio-settings/domain", headers=headers)
+    fetched = await client.get("/api/v1/portfolio-settings/domain", headers=headers)
     assert fetched.json()["domain"] == "second.example.com"
 
 
 async def test_new_profile_defaults_to_free_plan_with_no_usage_limits() -> None:
     client, headers = await authed_client("plan-default@example.com")
-    await client.patch("/v1/profiles/me", headers=headers, json={"full_name": "Someone"})
+    await client.patch("/api/v1/profiles/me", headers=headers, json={"full_name": "Someone"})
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
@@ -109,5 +119,5 @@ async def test_new_profile_defaults_to_free_plan_with_no_usage_limits() -> None:
 
 async def test_domain_endpoints_require_auth() -> None:
     client, _ = await authed_client("domain-noauth@example.com")
-    response = await client.get("/v1/portfolio-settings/domain")
+    response = await client.get("/api/v1/portfolio-settings/domain")
     assert response.status_code == 401

@@ -12,7 +12,7 @@ authenticated candidate/admin app. Full backend design: [`BACKEND_PLAN.md`](./BA
 
 ## 1. Base URL & conventions
 
-- All endpoints are prefixed `/v1`. Example base: `https://api.chatfolio.example.com/v1`.
+- All endpoints are prefixed `/api/v1`. Example base: `https://api.chatfolio.example.com/api/v1`.
 - JSON in, JSON out. `Content-Type: application/json` on every request with a body.
 - No authentication on any endpoint in this document — don't send an `Authorization` header,
   there's nothing to send.
@@ -24,7 +24,7 @@ authenticated candidate/admin app. Full backend design: [`BACKEND_PLAN.md`](./BA
 
 ## 2. Portfolio page
 
-### `GET /v1/public/chatfolio/{slug}`
+### `GET /api/v1/public/chatfolio/{slug}`
 
 Everything needed to render a candidate's public page in one call.
 
@@ -33,7 +33,7 @@ Everything needed to render a candidate's public page in one call.
 | Status | Meaning |
 |---|---|
 | `200` | Page data below |
-| `307` | The slug was renamed — `Location` header points at `/v1/public/chatfolio/{new-slug}`. Follow it (browsers and `fetch` do this automatically; if you're calling from a server-side proxy, follow redirects explicitly). |
+| `307` | The slug was renamed — `Location` header points at `/api/v1/public/chatfolio/{new-slug}`. Follow it (browsers and `fetch` do this automatically; if you're calling from a server-side proxy, follow redirects explicitly). |
 | `404` | Slug doesn't exist, or the Chatfolio isn't published. Show a generic "not found" page — don't distinguish the two cases (a candidate may have unpublished intentionally). |
 
 ```jsonc
@@ -101,7 +101,7 @@ Everything needed to render a candidate's public page in one call.
 - Only **approved** content is ever returned here; there's no way to accidentally see a
   candidate's draft/unpublished edits through this endpoint.
 
-### `GET /v1/public/chatfolio/{slug}/cv`
+### `GET /api/v1/public/chatfolio/{slug}/cv`
 
 Redirects (`307`, or `404` if unavailable) to a **short-lived presigned download URL** (1 hour
 TTL) for the candidate's most recently parsed CV. Point an `<a href>` or `window.location`
@@ -118,7 +118,7 @@ has no successfully parsed CV — check `cv_downloadable` before showing a downl
 Three-step flow: start a session once per page load, then send messages against that session id
 for the rest of the visit. There is no "end session" call — sessions just stop being used.
 
-### `POST /v1/public/chat/{slug}/sessions`
+### `POST /api/v1/public/chat/{slug}/sessions`
 
 Call this once when the chat widget first opens (not on every message).
 
@@ -134,7 +134,7 @@ Call this once when the chat widget first opens (not on every message).
 page load will never hit this; it exists to stop a script from mass-creating sessions. On `429`,
 show a generic "please try again in a moment" — don't retry automatically in a loop.
 
-### `POST /v1/public/chat/sessions/{session_id}/messages`
+### `POST /api/v1/public/chat/sessions/{session_id}/messages`
 
 ```jsonc
 // Request

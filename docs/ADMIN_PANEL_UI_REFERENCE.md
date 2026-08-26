@@ -13,7 +13,7 @@ unauthenticated recruiter-facing side. Full backend design: [`BACKEND_PLAN.md`](
 
 ## 1. Base URL & conventions
 
-- All endpoints prefixed `/v1`.
+- All endpoints prefixed `/api/v1`.
 - `Content-Type: application/json` on every request with a body, except file upload (§4, uses
   `multipart/form-data`).
 - Authenticated endpoints require `Authorization: Bearer <access_token>`.
@@ -30,7 +30,7 @@ unauthenticated recruiter-facing side. Full backend design: [`BACKEND_PLAN.md`](
 
 ## 2. Auth
 
-### `POST /v1/auth/register` — 5/min per IP
+### `POST /api/v1/auth/register` — 5/min per IP
 
 ```jsonc
 // Request
@@ -41,7 +41,7 @@ unauthenticated recruiter-facing side. Full backend design: [`BACKEND_PLAN.md`](
 ```
 `409` if the email is already registered.
 
-### `POST /v1/auth/login` — 10/min per IP
+### `POST /api/v1/auth/login` — 10/min per IP
 
 ```jsonc
 // Request
@@ -63,7 +63,7 @@ Branch the frontend on the `requires_two_factor` field, not on HTTP status — b
 `200`, since needing a second factor is a normal step in login, not an error. See §2.4 for the
 full 2FA verification flow.
 
-### `POST /v1/auth/refresh` — 20/min per IP
+### `POST /api/v1/auth/refresh` — 20/min per IP
 
 ```jsonc
 // Request
@@ -77,7 +77,7 @@ every use and a reused one is rejected outright (this is a theft/replay detector
 your app ever gets a `401` here unexpectedly, it means two tabs/requests raced to refresh with
 the same token — see §2.3).
 
-### `POST /v1/auth/logout` — 20/min per IP
+### `POST /api/v1/auth/logout` — 20/min per IP
 
 ```jsonc
 // Request
@@ -85,7 +85,7 @@ the same token — see §2.3).
 // 204 No Content — revokes the token if it wasn't already
 ```
 
-### `GET /v1/auth/me` — no rate limit beyond the norm, needs `Authorization`
+### `GET /api/v1/auth/me` — no rate limit beyond the norm, needs `Authorization`
 
 ```jsonc
 // 200 OK
@@ -134,7 +134,7 @@ independently call `/auth/refresh`.
 
 Two calls, no login required for either.
 
-#### `POST /v1/auth/forgot-password` — 5/min per IP
+#### `POST /api/v1/auth/forgot-password` — 5/min per IP
 
 ```jsonc
 // Request
@@ -151,7 +151,7 @@ If the email is registered, this sends a real email with a link shaped like
 screen: new + confirm fields, submitted together to the endpoint below). The token expires in
 **30 minutes** and is single-use.
 
-#### `POST /v1/auth/reset-password` — 5/min per IP
+#### `POST /api/v1/auth/reset-password` — 5/min per IP
 
 ```jsonc
 // Request
@@ -174,7 +174,7 @@ logged-in device/tab is signed out on its next `/auth/refresh` call). There's no
 Enrolling is a two-step confirm flow: request a code, then prove you received it. All calls here
 need `Authorization` — this is an account-settings action, not part of the public login screen.
 
-#### `POST /v1/auth/2fa/setup` — 5/min per IP
+#### `POST /api/v1/auth/2fa/setup` — 5/min per IP
 
 ```jsonc
 // Request — method "email"
@@ -193,7 +193,7 @@ Sends a 6-digit code to the chosen channel(s) immediately (same code to both des
 `"both"`) — 2FA is **not** enabled yet at this point, only pending. `422` if `method` is `"phone"`
 or `"both"` and no phone is on file and none was supplied in this call.
 
-#### `POST /v1/auth/2fa/verify-setup` — 10/min per IP
+#### `POST /api/v1/auth/2fa/verify-setup` — 10/min per IP
 
 ```jsonc
 // Request
@@ -212,7 +212,7 @@ this as a gap if the UI needs to offer turning it off.
 
 This is the second step after a `/auth/login` call returned `requires_two_factor: true` (§2.3).
 
-#### `POST /v1/auth/2fa/login/verify` — 10/min per IP
+#### `POST /api/v1/auth/2fa/login/verify` — 10/min per IP
 
 ```jsonc
 // Request
@@ -225,7 +225,7 @@ noticeably shorter than the OTP itself, since this token only bridges "password 
 verified" to "OTP verified"; if a user stalls on the code-entry screen past 5 minutes, send them
 back to `/auth/login` to start over rather than trying to resend against a dead challenge).
 
-#### `POST /v1/auth/2fa/login/resend` — 3/min per IP
+#### `POST /api/v1/auth/2fa/login/resend` — 3/min per IP
 
 ```jsonc
 // Request
@@ -240,11 +240,11 @@ gets `401` — don't treat that as a bug if you see it while testing.
 
 ## 3. Candidate profile
 
-All under `/v1/profiles/me`, all require `Authorization`. The profile is auto-created on first
+All under `/api/v1/profiles/me`, all require `Authorization`. The profile is auto-created on first
 access — there's no separate "create profile" step; `GET`/`PATCH` both lazily create one if it
 doesn't exist yet.
 
-### `GET /v1/profiles/me` · `PATCH /v1/profiles/me`
+### `GET /api/v1/profiles/me` · `PATCH /api/v1/profiles/me`
 
 ```jsonc
 // PATCH request — every field optional, send only what changed
@@ -259,16 +259,16 @@ doesn't exist yet.
 
 ### Child resources: Experience / Project / Skill / Education
 
-Same CRUD shape for all four, under `/v1/profiles/me/{experience|projects|skills|education}`.
+Same CRUD shape for all four, under `/api/v1/profiles/me/{experience|projects|skills|education}`.
 **There is no single-item GET** — only list, create, update, delete. Fetch the full list and find
 the item client-side if you need to re-read one after a list is already loaded; don't build a UI
 flow that assumes a per-item fetch exists.
 
-- `GET /v1/profiles/me/experience` → `200`, full array for the current user (no pagination — the
+- `GET /api/v1/profiles/me/experience` → `200`, full array for the current user (no pagination — the
   expected cardinality per candidate is small, tens at most)
-- `POST /v1/profiles/me/experience` → `201`, body per-type (see table below)
-- `PATCH /v1/profiles/me/experience/{id}` → `200`, all fields optional
-- `DELETE /v1/profiles/me/experience/{id}` → `204`
+- `POST /api/v1/profiles/me/experience` → `201`, body per-type (see table below)
+- `PATCH /api/v1/profiles/me/experience/{id}` → `200`, all fields optional
+- `DELETE /api/v1/profiles/me/experience/{id}` → `204`
 
 | Type | Fields |
 |---|---|
@@ -282,7 +282,7 @@ flow that assumes a per-item fetch exists.
 same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 
 ```jsonc
-// POST /v1/profiles/me/experience
+// POST /api/v1/profiles/me/experience
 // Request
 { "company": "Acme", "role": "Backend Engineer", "start_date": "2022-08-23", "end_date": null,
   "is_current": true, "description": "Leading backend platform work." }
@@ -294,7 +294,7 @@ same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 ```
 
 ```jsonc
-// POST /v1/profiles/me/projects
+// POST /api/v1/profiles/me/projects
 // Request
 { "title": "CFL", "description": "Closed feedback loop system automating survey processes.",
   "tech_stack": ["Laravel", "PHP", "MySQL", "ReactJS"], "impact": "20M+ BDT annually",
@@ -307,7 +307,7 @@ same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 ```
 
 ```jsonc
-// POST /v1/profiles/me/skills
+// POST /api/v1/profiles/me/skills
 // Request
 { "name": "PHP", "category": "Language", "proficiency": "Best" }
 
@@ -316,7 +316,7 @@ same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 ```
 
 ```jsonc
-// POST /v1/profiles/me/education
+// POST /api/v1/profiles/me/education
 // Request
 { "institution": "University of Dhaka", "degree": "BSc", "field": "Computer Science",
   "start_date": "2016-09-01", "end_date": "2020-06-01" }
@@ -327,7 +327,7 @@ same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 ```
 
 ```jsonc
-// PATCH /v1/profiles/me/skills/{id} — every field optional, send only what changed
+// PATCH /api/v1/profiles/me/skills/{id} — every field optional, send only what changed
 // Request
 { "proficiency": "Excellent" }
 
@@ -335,7 +335,7 @@ same as `PATCH /profiles/me`). `POST` responses are `201`, `PATCH` are `200`.
 { "name": "PHP", "category": "Language", "proficiency": "Excellent", "id": "uuid" }
 ```
 
-`GET /v1/profiles/me/{path}` (the list endpoint) returns a plain array of the same per-type shape
+`GET /api/v1/profiles/me/{path}` (the list endpoint) returns a plain array of the same per-type shape
 shown above — `[{ ...experience }, { ...experience }]`, no wrapper object, no pagination metadata.
 
 **Every create/update/delete on these four types silently triggers a background re-embed** of
@@ -348,7 +348,7 @@ in what the chat widget can answer about.
 ## 4. CV upload — 10/hour per IP on upload and retry
 
 ```jsonc
-// POST /v1/cv/upload — multipart/form-data, field name "file"
+// POST /api/v1/cv/upload — multipart/form-data, field name "file"
 // Accepts PDF, DOC, DOCX only, 20MB max. The backend also verifies the actual file signature,
 // not just the extension/content-type — a mislabeled file is rejected with 422 even if the
 // extension looks right.
@@ -359,18 +359,18 @@ in what the chat widget can answer about.
 ```
 
 `status` progresses `pending` → `processing` → `parsed` | `failed` via a background worker — the
-frontend must **poll** `GET /v1/cv/{id}/status` (same response shape) to see this transition;
+frontend must **poll** `GET /api/v1/cv/{id}/status` (same response shape) to see this transition;
 there's no push/webhook. A few-second interval is reasonable; the parse itself typically takes a
 few seconds to under a minute depending on LLM latency.
 
-`POST /v1/cv/{id}/retry` → same response shape, only valid when `status == "failed"` (`422`
+`POST /api/v1/cv/{id}/retry` → same response shape, only valid when `status == "failed"` (`422`
 otherwise). Re-runs the parse.
 
 ---
 
 ## 5. Portfolio sections (AI-generated intro/summary)
 
-`GET /v1/sections` — returns exactly two sections (`intro`, `summary`), auto-generating any that
+`GET /api/v1/sections` — returns exactly two sections (`intro`, `summary`), auto-generating any that
 don't exist yet on first call (so the very first call after profile setup may take a few seconds
 — show a loading state, not just a spinner-less blank).
 
@@ -383,26 +383,26 @@ don't exist yet on first call (so the very first call after profile setup may ta
 ]
 ```
 
-- `PATCH /v1/sections/{id}` `{ "content": "..." }` — manual edit. Sets `generated_by: "manual"`
+- `PATCH /api/v1/sections/{id}` `{ "content": "..." }` — manual edit. Sets `generated_by: "manual"`
   and resets `status` back to `"draft"` even if it was previously approved — a manual edit always
   needs re-approval before it grounds chat answers again.
-- `POST /v1/sections/{id}/regenerate` — **10/hour per IP**, re-runs AI generation, bumps
+- `POST /api/v1/sections/{id}/regenerate` — **10/hour per IP**, re-runs AI generation, bumps
   `version`. Disable the button after a few uses per session rather than letting a user
   discover the rate limit via a raw `429` — show remaining-attempts UX if you track it
   client-side, or just a friendly "you've regenerated this a lot recently, try again in a bit."
-- `POST /v1/sections/{id}/approve` — flips `status` to `"approved"` and enqueues it for chat
+- `POST /api/v1/sections/{id}/approve` — flips `status` to `"approved"` and enqueues it for chat
   retrieval. **Both sections must be approved before the portfolio can be published** (§6).
 
 ---
 
 ## 6. Portfolio settings & publish
 
-All under `/v1/portfolio-settings`, auto-creates on first access (same lazy pattern as §3). A
+All under `/api/v1/portfolio-settings`, auto-creates on first access (same lazy pattern as §3). A
 freshly auto-created record (no profile name or slug chosen yet) looks like this — `slug`
 defaults to `candidate-<random>`, `contact_cta_config` defaults to `{}`, not a pre-filled example:
 
 ```jsonc
-// GET /v1/portfolio-settings
+// GET /api/v1/portfolio-settings
 { "slug": "candidate-f391c9", "subdomain": "candidate-f391c9.chatfolio.com",
   "previous_slug": null, "is_published": false, "published_at": null,
   "contact_cta_config": {}, "cv_downloadable": true }
@@ -413,7 +413,7 @@ defaults to `candidate-<random>`, `contact_cta_config` defaults to `{}`, not a p
 UX; the backend also enforces it (`422`) and uniqueness (`409` if taken).
 
 ```jsonc
-// PATCH /v1/portfolio-settings — every field optional, send only what changed
+// PATCH /api/v1/portfolio-settings — every field optional, send only what changed
 // Request
 { "slug": "portfolio-doc-test",
   "contact_cta_config": { "label": "Get in touch", "url": "mailto:test@example.com" } }
@@ -428,7 +428,7 @@ UX; the backend also enforces it (`422`) and uniqueness (`409` if taken).
 Note `previous_slug` picks up the slug you just replaced automatically — you never send it
 yourself, and it's what powers the "old link keeps working" redirect below.
 
-### `POST /v1/portfolio-settings/publish`
+### `POST /api/v1/portfolio-settings/publish`
 
 **Preconditions, both required or `422` with a combined message covering everything missing at
 once** (verified live — don't assume it stops at the first failure):
@@ -453,7 +453,7 @@ only showing the error after a failed publish attempt. Once both preconditions a
   "cv_downloadable": true }
 ```
 
-### `POST /v1/portfolio-settings/unpublish`
+### `POST /api/v1/portfolio-settings/unpublish`
 
 Always succeeds, takes the page down immediately (`is_published: false`). **`published_at` is
 *not* cleared** — it keeps the timestamp of the last publish rather than resetting to `null`, so
@@ -477,9 +477,9 @@ candidates aren't afraid to rename.
 
 ## 7. Candidate dashboard — recruiter conversations
 
-Read-only views of chats recruiters have had, under `/v1/dashboard`.
+Read-only views of chats recruiters have had, under `/api/v1/dashboard`.
 
-### `GET /v1/dashboard/conversations?limit=20&offset=0`
+### `GET /api/v1/dashboard/conversations?limit=20&offset=0`
 
 ```jsonc
 [
@@ -501,7 +501,7 @@ the chat widget (which creates a session, see `PUBLIC_CHAT_UI_REFERENCE.md` §3)
 anything never shows up here, so `message_count` is never `0` in this list. Don't build UI for an
 "empty conversation" state; it can't happen.
 
-### `GET /v1/dashboard/conversations/{id}`
+### `GET /api/v1/dashboard/conversations/{id}`
 
 Same shape plus `"messages": [{ "role": "recruiter"|"assistant", "content": "...", "intent":
 "skill_inquiry"|"unknown", "created_at": "..." }]`, ordered oldest-first. `intent` is the
@@ -510,7 +510,7 @@ the assistant reply that answered it — so it's on every message, not just the 
 (older conversations recorded before 2026-08-22 may still show `null` on their assistant rows;
 only new messages carry it on both).
 
-### `POST /v1/dashboard/conversations/{id}/mark-reviewed`
+### `POST /api/v1/dashboard/conversations/{id}/mark-reviewed`
 
 No body. Returns the summary shape with `reviewed_by_candidate: true`. Purely a candidate-side
 bookkeeping flag ("I've read this") — has no effect on anything else.
@@ -526,19 +526,19 @@ endpoint here 403s for a non-admin token. Gate these routes/nav items on `role =
 client-side too, but treat that as a UX nicety, not the security boundary — the backend enforces
 it regardless.
 
-### `GET /v1/admin/users?limit=20&offset=0`
+### `GET /api/v1/admin/users?limit=20&offset=0`
 ```jsonc
 [{ "id": "uuid", "email": "ada@example.com", "role": "candidate", "is_active": true }]
 ```
 
-### `GET /v1/admin/chatfolios?is_published=true&limit=20&offset=0`
+### `GET /api/v1/admin/chatfolios?is_published=true&limit=20&offset=0`
 `is_published` query param is optional — omit it to see both published and unpublished.
 ```jsonc
 [{ "id": "uuid", "slug": "ada-lovelace", "is_published": true,
    "published_at": "2026-08-21T14:30:59Z", "owner_email": "ada@example.com" }]
 ```
 
-### `GET /v1/admin/metrics`
+### `GET /api/v1/admin/metrics`
 ```jsonc
 { "total_users": 42, "total_candidates": 40, "published_chatfolios": 18,
   "total_chat_sessions": 310, "total_chat_messages": 1204, "flagged_chat_sessions": 3,
@@ -546,16 +546,22 @@ it regardless.
 ```
 Plain point-in-time counts, no time-series/history — poll on dashboard load, not a live feed.
 
-### `GET /v1/admin/cv-jobs/failed?limit=20&offset=0`
+**Coming soon, not in the response yet**: the backend now tracks real cumulative LLM token usage
+per candidate (`CandidateProfile.ai_tokens_used`, incremented on every real section-generation,
+chat, and CV-parsing completion) as groundwork for `Required_API_Doc.md` §2/§6's analytics
+endpoints. Nothing reads or exposes this field through any endpoint yet — don't build UI against
+it until a later doc update adds it to `GET /dashboard/analytics` and this endpoint.
+
+### `GET /api/v1/admin/cv-jobs/failed?limit=20&offset=0`
 ```jsonc
 [{ "id": "uuid", "status": "failed", "error_message": "Could not extract text.",
    "owner_email": "ada@example.com", "created_at": "2026-08-21T13:31:15Z" }]
 ```
 
-### `POST /v1/admin/cv-jobs/{id}/retry`
+### `POST /api/v1/admin/cv-jobs/{id}/retry`
 Same response shape as above with `status` reset to `"pending"`. Re-enqueues the parse job.
 
-### `POST /v1/admin/chatfolios/{id}/unpublish`
+### `POST /api/v1/admin/chatfolios/{id}/unpublish`
 Same shape as the chatfolios list entry, `is_published: false`. Immediately takes the page
 down — same effect as the candidate's own unpublish button, just admin-triggered. Every call
 here writes an audit log entry server-side; no separate audit-log endpoint exists yet to display
@@ -565,7 +571,7 @@ that history in the UI, but the action itself is always recorded.
 
 ## 9. Custom domains — not live yet
 
-`/v1/portfolio-settings/domain` (`GET`/`POST`/`DELETE`) exists in the API but returns `404` on
+`/api/v1/portfolio-settings/domain` (`GET`/`POST`/`DELETE`) exists in the API but returns `404` on
 every call until the backend's `enable_custom_domains` feature flag is turned on — which it
 isn't, anywhere, today. Don't build UI for this yet; there's nothing to point it at. If/when the
 flag flips on, `POST` takes `{ "domain": "candidate.example.com" }` (validated as a real

@@ -9,6 +9,7 @@ from chatfolio.cv_parsing import CVParsingError, extract_text
 from chatfolio.llm.factory import LLMProviderFactory
 from chatfolio.llm.prompts.cv_extraction import CV_EXTRACTION_SYSTEM_PROMPT
 from chatfolio.models.cv import CVStatus, UploadedCV
+from chatfolio.models.profile import CandidateProfile
 from chatfolio.storage.base import StorageBackend
 
 logger = structlog.get_logger(__name__)
@@ -39,16 +40,20 @@ async def parse_cv_job(ctx: dict[str, Any], cv_id: str) -> None:
             raw_text = extract_text(cv.file_type, content)
 
             provider = llm_factory.for_task(LLMTask.EXTRACTION)
-            response = await provider.complete(
+            completion = await provider.complete(
                 system=CV_EXTRACTION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": raw_text}],
                 json_mode=True,
             )
 
             cv.raw_text = raw_text
-            cv.parsed_json = json.loads(response)
+            cv.parsed_json = json.loads(completion.content)
             cv.status = CVStatus.PARSED
             cv.error_message = None
+
+            profile = await session.get(CandidateProfile, cv.profile_id)
+            if profile is not None:
+                profile.ai_tokens_used += completion.tokens_used
         except CVParsingError as exc:
             cv.status = CVStatus.FAILED
             cv.error_message = str(exc)

@@ -1,6 +1,6 @@
 import httpx
 
-from chatfolio.llm.base import Message
+from chatfolio.llm.base import LLMCompletion, Message
 
 
 class DeepSeekProvider:
@@ -21,7 +21,7 @@ class DeepSeekProvider:
 
     async def complete(
         self, *, system: str, messages: list[Message], json_mode: bool = False
-    ) -> str:
+    ) -> LLMCompletion:
         payload: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": "system", "content": system}, *messages],
@@ -38,4 +38,5 @@ class DeepSeekProvider:
             response.raise_for_status()
             data = response.json()
             content: str = data["choices"][0]["message"]["content"]
-            return content
+            tokens_used: int = data.get("usage", {}).get("total_tokens", 0)
+            return LLMCompletion(content=content, tokens_used=tokens_used)

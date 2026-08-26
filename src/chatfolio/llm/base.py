@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
 if TYPE_CHECKING:
@@ -9,10 +10,18 @@ class Message(TypedDict):
     content: str
 
 
+@dataclass(frozen=True)
+class LLMCompletion:
+    content: str
+    # 0 when a provider doesn't report usage (or none was ever called, e.g. a guardrail
+    # short-circuit) — always a real number, never None, so callers can sum it unconditionally.
+    tokens_used: int
+
+
 class LLMProvider(Protocol):
     async def complete(
         self, *, system: str, messages: list[Message], json_mode: bool = False
-    ) -> str: ...
+    ) -> LLMCompletion: ...
 
 
 class LLMFactory(Protocol):

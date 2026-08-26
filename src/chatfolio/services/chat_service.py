@@ -57,13 +57,13 @@ class ChatService:
         self._session.add(recruiter_message)
         await self._session.flush()
 
-        intent, extracted_context = await self._rag.classify_and_extract(content)
+        intent, extracted_context, intent_tokens = await self._rag.classify_and_extract(content)
         recruiter_message.intent = intent.value
         await self._merge_recruiter_metadata(chat_session.id, extracted_context)
 
         sections = await self._approved_sections(profile.id)
         retrieved = await self._rag.retrieve(profile.id, content)
-        reply_text = await self._rag.generate_reply(
+        reply_text, reply_tokens = await self._rag.generate_reply(
             session_id=chat_session.id,
             full_name=profile.full_name,
             intro=sections.get(SectionType.INTRO),
@@ -73,6 +73,7 @@ class ChatService:
             user_message=content,
             intent=intent,
         )
+        profile.ai_tokens_used += intent_tokens + reply_tokens
 
         assistant_message = ChatMessage(
             session_id=chat_session.id,
