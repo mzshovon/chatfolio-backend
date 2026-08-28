@@ -503,6 +503,36 @@ Each phase should ship with tests before moving to the next — no phase depends
 
 ## 16. Changelog
 
+- **2026-08-28** — Fixed `relation "users" does not exist` (and every other table) in production,
+  user-reported — the exact same build as local, but production Postgres had never had a
+  migration run against it. Root cause: nothing in this codebase ever ran `alembic upgrade head`
+  automatically — not the `Dockerfile`, not `docker-compose.yml`, not CI (`.github/workflows/ci.yml`
+  only lints/tests/builds, never deploys or migrates). Locally this was invisible because the dev
+  and test databases got their schema from every manual `alembic upgrade head` run through this
+  project's history — a step nobody had to think about until a genuinely fresh database showed up.
+  - **New one-shot `migrate` service** in `docker-compose.yml`: `command: ["alembic", "upgrade",
+    "head"]`, depends on `postgres` reaching a real `pg_isready` healthcheck (new — `postgres` had
+    none before, so `depends_on` only ever waited for the container to *start*, not to actually
+    accept connections). `api` and `worker` now both `depends_on: migrate: condition:
+    service_completed_successfully` instead of just `- postgres`, so neither can start querying
+    tables before the schema exists.
+  - **Deliberately not embedded in `api`'s or `worker`'s own entrypoint** — both share one image
+    and start at roughly the same time with no ordering between them; two containers each running
+    `alembic upgrade head` concurrently is a documented way to corrupt a migration (both can see
+    "nothing applied yet" and both attempt the same DDL). A single dedicated service that must
+    finish successfully before either starts removes that race entirely.
+  - `alembic upgrade head` is idempotent — it only applies migrations after whatever revision
+    `alembic_version` already records, and does nothing if there's nothing pending. Running it on
+    every `docker compose up`/deploy is exactly the intended, safe pattern; it does **not**
+    drop, recreate, or refresh anything — confirmed by running it against the real dev database
+    (already fully migrated) immediately after this change: it exited cleanly with no DDL and
+    every existing row (7 real dev users, all prior data) untouched.
+  - Verified live end-to-end: reproduced the actual failure first (`docker exec`ed into a truly
+    empty, freshly-created Postgres container, confirmed `\dt` found no relations at all), ran the
+    new `migrate` image against it directly, and confirmed all 14 migrations applied in order and
+    every table now exists — the exact scenario production hit. No test suite changes (this is a
+    deploy-topology fix, not application code).
+
 - **2026-08-26** — Fixed every outbound email/SMS send (password reset, 2FA setup/login codes,
   email-change confirmation, admin-created-user credentials) blocking its HTTP response on the
   full SMTP/SMS round-trip — user-reported while reviewing the codebase. `EmailSender.send`/

@@ -1,4 +1,21 @@
 services:
+  # One-shot: applies every Alembic migration, then exits. Neither `api` nor `worker` runs
+  # migrations itself — two containers each racing to `alembic upgrade head` on startup is a
+  # documented way to corrupt a migration (both see "nothing applied yet" and both try to run
+  # the same DDL). This is the single place migrations happen; `api`/`worker` just wait for it
+  # to finish successfully before they start, so a fresh/empty database (a new environment, a
+  # freshly provisioned managed Postgres, etc.) always has its schema created before anything
+  # queries it — the exact gap that caused `relation "users" does not exist` in production.
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
   api:
     build: .
     env_file: .env
@@ -11,10 +28,14 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
-      - chroma
-      - minio
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      chroma:
+        condition: service_started
+      minio:
+        condition: service_started
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
@@ -31,10 +52,14 @@ services:
       VECTORSTORE_PORT: 8000
       STORAGE_ENDPOINT_URL: http://minio:9000
     depends_on:
-      - postgres
-      - redis
-      - chroma
-      - minio
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      chroma:
+        condition: service_started
+      minio:
+        condition: service_started
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
@@ -48,6 +73,11 @@ services:
       POSTGRES_DB: chatfolio
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatfolio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
