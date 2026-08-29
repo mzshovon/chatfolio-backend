@@ -19,7 +19,7 @@ from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.portfolio_settings import PortfolioSettingsUpdateRequest
 from chatfolio.services.profile_service import ProfileService
 
-SUBDOMAIN_SUFFIX = ".chatfolio.com"
+SUBDOMAIN_SUFFIX = ".chatfolio.chat"
 
 ChildT = TypeVar("ChildT", bound=ProfileChildMixin)
 
