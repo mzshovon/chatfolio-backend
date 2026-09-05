@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TypeVar
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.core.exceptions import ConflictError, ValidationFailedError
@@ -50,7 +51,18 @@ class PortfolioService:
             slug = await self._generate_unique_slug(profile.full_name or "candidate")
             chatfolio = PublicChatfolio(profile_id=profile.id, slug=slug)
             self._session.add(chatfolio)
-            await self._session.flush()
+            try:
+                await self._session.flush()
+            except IntegrityError:
+                # Lost a race against a concurrent request creating the same chatfolio
+                # (e.g. parallel dashboard calls right after registration).
+                await self._session.rollback()
+                result = await self._session.execute(
+                    select(PublicChatfolio).where(PublicChatfolio.profile_id == profile.id)
+                )
+                chatfolio = result.scalar_one_or_none()
+                if chatfolio is None:
+                    raise
         return chatfolio
 
     async def update_settings(

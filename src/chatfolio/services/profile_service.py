@@ -1,6 +1,8 @@
 import uuid
 from typing import TypeVar
 
+from sqlalchemy.exc import IntegrityError
+
 from chatfolio.core.exceptions import NotFoundError
 from chatfolio.models.mixins import ProfileChildMixin
 from chatfolio.models.profile import CandidateProfile
@@ -18,7 +20,15 @@ class ProfileService:
     async def get_or_create_for_user(self, user: User) -> CandidateProfile:
         profile = await self._repository.get_by_user_id(user.id)
         if profile is None:
-            profile = await self._repository.create(CandidateProfile(user_id=user.id))
+            try:
+                profile = await self._repository.create(CandidateProfile(user_id=user.id))
+            except IntegrityError:
+                # Lost a race against a concurrent request creating the same profile
+                # (e.g. parallel dashboard calls right after registration).
+                await self._repository.session.rollback()
+                profile = await self._repository.get_by_user_id(user.id)
+                if profile is None:
+                    raise
         return profile
 
     async def update(self, user: User, payload: ProfileUpdateRequest) -> CandidateProfile:
