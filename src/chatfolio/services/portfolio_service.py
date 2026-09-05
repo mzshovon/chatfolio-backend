@@ -48,17 +48,20 @@ class PortfolioService:
         )
         chatfolio = result.scalar_one_or_none()
         if chatfolio is None:
+            profile_id = profile.id
             slug = await self._generate_unique_slug(profile.full_name or "candidate")
-            chatfolio = PublicChatfolio(profile_id=profile.id, slug=slug)
-            self._session.add(chatfolio)
             try:
-                await self._session.flush()
+                # A SAVEPOINT confines the rollback to this insert on conflict, instead of
+                # expiring every object already loaded in the outer session (e.g. `profile`).
+                async with self._session.begin_nested():
+                    chatfolio = PublicChatfolio(profile_id=profile_id, slug=slug)
+                    self._session.add(chatfolio)
+                    await self._session.flush()
             except IntegrityError:
                 # Lost a race against a concurrent request creating the same chatfolio
                 # (e.g. parallel dashboard calls right after registration).
-                await self._session.rollback()
                 result = await self._session.execute(
-                    select(PublicChatfolio).where(PublicChatfolio.profile_id == profile.id)
+                    select(PublicChatfolio).where(PublicChatfolio.profile_id == profile_id)
                 )
                 chatfolio = result.scalar_one_or_none()
                 if chatfolio is None:

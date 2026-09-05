@@ -18,15 +18,18 @@ class ProfileService:
         self._repository = repository
 
     async def get_or_create_for_user(self, user: User) -> CandidateProfile:
-        profile = await self._repository.get_by_user_id(user.id)
+        user_id = user.id
+        profile = await self._repository.get_by_user_id(user_id)
         if profile is None:
             try:
-                profile = await self._repository.create(CandidateProfile(user_id=user.id))
+                # A SAVEPOINT confines the rollback to this insert on conflict, instead of
+                # expiring every object already loaded in the outer session (e.g. `user`).
+                async with self._repository.session.begin_nested():
+                    profile = await self._repository.create(CandidateProfile(user_id=user_id))
             except IntegrityError:
                 # Lost a race against a concurrent request creating the same profile
                 # (e.g. parallel dashboard calls right after registration).
-                await self._repository.session.rollback()
-                profile = await self._repository.get_by_user_id(user.id)
+                profile = await self._repository.get_by_user_id(user_id)
                 if profile is None:
                     raise
         return profile
