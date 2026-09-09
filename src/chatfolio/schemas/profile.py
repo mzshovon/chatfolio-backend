@@ -3,7 +3,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
-from chatfolio.models.profile import ProfileStatus
+from chatfolio.models.profile import JobType, ProfileStatus
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -11,6 +11,7 @@ class ProfileUpdateRequest(BaseModel):
     title: str | None = None
     bio: str | None = None
     location: str | None = None
+    job_type: JobType | None = None
     contact_email: EmailStr | None = None
     phone: str | None = None
     social_links: dict[str, str] | None = None
@@ -24,6 +25,7 @@ class ProfileResponse(BaseModel):
     title: str | None
     bio: str | None
     location: str | None
+    job_type: JobType | None
     contact_email: str | None
     phone: str | None
     social_links: dict[str, str]

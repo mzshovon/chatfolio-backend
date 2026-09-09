@@ -7,13 +7,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chatfolio.models.embedding import VectorEmbedding
-from chatfolio.models.profile import Education, Experience, Project, Skill
+from chatfolio.models.profile import CandidateProfile, Education, Experience, Project, Skill
 from chatfolio.vectorstore.base import VectorStore
 from chatfolio.workers.queue import JobQueue
 
 logger = structlog.get_logger(__name__)
 
 EMBEDDING_COLLECTION = "chatfolio_content"
+
+# Distinct source_type for the profile-level facts chunk (job type / location / title), kept
+# separate from EMBEDDABLE_CHILD_TYPES since CandidateProfile is a 1:1 singleton, not a list of
+# child rows — there's exactly one of these per profile, re-embedded on every profile update.
+PROFILE_FACTS_SOURCE_TYPE = "profile_facts"
+
+
+def profile_facts_chunk_text(profile: CandidateProfile) -> str:
+    """Grounds location/work-mode questions (e.g. "are you open to remote roles?") in the vector
+    store so `RAGService.retrieve` can surface them for availability/role-fit inquiries, the same
+    way it surfaces Experience/Project/Skill/Education chunks."""
+    parts = [f"Title: {profile.title}"] if profile.title else []
+    if profile.location:
+        parts.append(f"Location: {profile.location}")
+    if profile.job_type:
+        parts.append(f"Preferred work mode: {profile.job_type.value}")
+    return ". ".join(parts)
 
 
 def experience_chunk_text(experience: Experience) -> str:

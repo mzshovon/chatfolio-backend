@@ -39,6 +39,8 @@ from chatfolio.models.embedding import VectorEmbedding
 from chatfolio.models.profile import CandidateProfile
 from chatfolio.services.embedding_service import (
     EMBEDDABLE_CHILD_TYPES,
+    PROFILE_FACTS_SOURCE_TYPE,
+    profile_facts_chunk_text,
     reconcile_missing_embeddings,
 )
 from chatfolio.vectorstore.chroma_store import ChromaVectorStore
@@ -70,6 +72,30 @@ async def backfill(profile_id: uuid.UUID | None, force: bool) -> None:
             profile_ids = list(profile_result.scalars().all())
 
         for pid in profile_ids:
+            profile = await session.get(CandidateProfile, pid)
+            facts_text = profile_facts_chunk_text(profile) if profile is not None else ""
+            if facts_text.strip():
+                already_embedded = False
+                if not force:
+                    pointer_result = await session.execute(
+                        select(VectorEmbedding.id).where(
+                            VectorEmbedding.chroma_ref_id == f"{PROFILE_FACTS_SOURCE_TYPE}:{pid}"
+                        )
+                    )
+                    already_embedded = pointer_result.scalar_one_or_none() is not None
+
+                if already_embedded:
+                    skipped += 1
+                else:
+                    await pool.enqueue_job(
+                        "embed_content_job",
+                        str(pid),
+                        PROFILE_FACTS_SOURCE_TYPE,
+                        str(pid),
+                        facts_text,
+                    )
+                    enqueued += 1
+
             for source_type, (model, chunk_builder) in EMBEDDABLE_CHILD_TYPES.items():
                 child_result = await session.execute(select(model).where(model.profile_id == pid))
                 for row in child_result.scalars().all():

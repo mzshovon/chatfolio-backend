@@ -14,7 +14,7 @@ from chatfolio.models.chatfolio import PortfolioVisit, PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.mixins import ProfileChildMixin
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
-from chatfolio.models.profile import CandidateProfile, ProfileStatus
+from chatfolio.models.profile import CandidateProfile, JobType, ProfileStatus
 from chatfolio.models.user import User
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.portfolio_settings import PortfolioSettingsUpdateRequest
@@ -163,6 +163,38 @@ class PublicPortfolioService:
 
     async def get_profile(self, profile_id: uuid.UUID) -> CandidateProfile | None:
         return await self._session.get(CandidateProfile, profile_id)
+
+    async def search_published(
+        self,
+        *,
+        username: str | None = None,
+        location: str | None = None,
+        job_type: JobType | None = None,
+        field: str | None = None,
+        limit: int = 25,
+    ) -> list[tuple[PublicChatfolio, CandidateProfile]]:
+        """Recruiter-facing search across published Chatfolios. Every filter is optional and
+        combines with the others (AND) — `username` matches the public slug, `field` matches the
+        candidate's title (e.g. "Software Engineer"), both case-insensitive partial matches.
+        Never touches unpublished/draft profiles, same guarantee as `get_published_by_slug`.
+        """
+        stmt = (
+            select(PublicChatfolio, CandidateProfile)
+            .join(CandidateProfile, CandidateProfile.id == PublicChatfolio.profile_id)
+            .where(PublicChatfolio.is_published.is_(True))
+        )
+        if username:
+            stmt = stmt.where(PublicChatfolio.slug.ilike(f"%{username}%"))
+        if location:
+            stmt = stmt.where(CandidateProfile.location.ilike(f"%{location}%"))
+        if job_type:
+            stmt = stmt.where(CandidateProfile.job_type == job_type)
+        if field:
+            stmt = stmt.where(CandidateProfile.title.ilike(f"%{field}%"))
+
+        stmt = stmt.order_by(PublicChatfolio.published_at.desc()).limit(limit)
+        result = await self._session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
 
     async def list_approved_sections(self, profile_id: uuid.UUID) -> dict[SectionType, str]:
         result = await self._session.execute(

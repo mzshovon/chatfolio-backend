@@ -26,9 +26,11 @@ from chatfolio.schemas.profile import (
     SkillUpdateRequest,
 )
 from chatfolio.services.embedding_service import (
+    PROFILE_FACTS_SOURCE_TYPE,
     EmbeddingService,
     education_chunk_text,
     experience_chunk_text,
+    profile_facts_chunk_text,
     project_chunk_text,
     skill_chunk_text,
 )
@@ -54,9 +56,16 @@ async def get_my_profile(current_user: CurrentUserDep, session: DbSessionDep) ->
 
 @router.patch("", response_model=ProfileResponse, tags=["profile"])
 async def update_my_profile(
-    payload: ProfileUpdateRequest, current_user: CurrentUserDep, session: DbSessionDep
+    payload: ProfileUpdateRequest,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    vector_store: VectorStoreDep,
+    job_queue: JobQueueDep,
 ) -> ProfileResponse:
     profile = await _service(session).update(current_user, payload)
+    await EmbeddingService(session, vector_store, job_queue).enqueue_embed(
+        profile.id, PROFILE_FACTS_SOURCE_TYPE, profile.id, profile_facts_chunk_text(profile)
+    )
     return ProfileResponse.model_validate(profile)
 
 

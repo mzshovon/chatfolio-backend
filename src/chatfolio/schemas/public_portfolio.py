@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+from chatfolio.models.profile import JobType
 from chatfolio.schemas.profile import (
     EducationResponse,
     ExperienceResponse,
@@ -13,6 +14,7 @@ class PublicChatfolioResponse(BaseModel):
     full_name: str | None
     title: str | None
     location: str | None
+    job_type: JobType | None
     contact_email: str | None
     phone: str | None
     social_links: dict[str, str]
@@ -24,4 +26,10 @@ class PublicChatfolioResponse(BaseModel):
     education: list[EducationResponse]
     contact_cta_config: dict[str, str]
     cv_downloadable: bool
+    recruiter_count: int
+
+
+class PortfolioSearchResult(BaseModel):
+    slug: str
+    full_name: str | None
     recruiter_count: int

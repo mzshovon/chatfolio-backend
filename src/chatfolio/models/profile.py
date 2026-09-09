@@ -15,6 +15,12 @@ class ProfileStatus(StrEnum):
     APPROVED = "approved"
 
 
+class JobType(StrEnum):
+    REMOTE = "remote"
+    ONSITE = "onsite"
+    HYBRID = "hybrid"
+
+
 # Applied when a profile's `usage_limits` JSON has no "ai_tokens_monthly_quota" key of its own
 # (i.e. every profile today — nothing sets this yet) rather than adding a dedicated column for a
 # single Phase-2 default.
@@ -31,6 +37,9 @@ class CandidateProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str | None] = mapped_column(String(255), default=None)
     bio: Mapped[str | None] = mapped_column(Text, default=None)
     location: Mapped[str | None] = mapped_column(String(255), default=None)
+    job_type: Mapped[JobType | None] = mapped_column(
+        Enum(JobType, name="job_type"), default=None
+    )
     contact_email: Mapped[str | None] = mapped_column(String(255), default=None)
     phone: Mapped[str | None] = mapped_column(String(50), default=None)
     social_links: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

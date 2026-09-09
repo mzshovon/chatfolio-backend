@@ -128,6 +128,7 @@ class GenerationService:
             f"Title: {profile.title or 'unknown'}",
             f"Bio: {profile.bio or 'none provided'}",
             f"Location: {profile.location or 'unknown'}",
+            f"Preferred work mode: {profile.job_type.value if profile.job_type else 'unknown'}",
         ]
 
     @staticmethod

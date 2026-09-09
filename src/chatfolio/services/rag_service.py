@@ -97,6 +97,10 @@ class RAGService:
         full_name: str | None,
         intro: str | None,
         summary: str | None,
+        location: str | None,
+        job_type: str | None,
+        contact_email: str | None,
+        phone: str | None,
         retrieved: list[QueryMatch],
         history: list[Message],
         user_message: str,
@@ -115,6 +119,21 @@ class RAGService:
             context_parts.append(f"Introduction: {intro}")
         if summary:
             context_parts.append(f"Career summary: {summary}")
+        # Verified facts pulled directly from the candidate's own profile row — never from
+        # generated/embedded text — so contact and work-mode questions are always answered from
+        # the single source of truth instead of the model guessing from context clues.
+        context_parts.append(
+            f"Preferred work mode: {job_type or 'not specified by the candidate'}."
+        )
+        context_parts.append(f"Location: {location or 'not specified by the candidate'}.")
+        context_parts.append(
+            "Contact email: "
+            + (contact_email or "not provided — do not invent or guess one")
+            + "."
+        )
+        context_parts.append(
+            "Contact phone: " + (phone or "not provided — do not invent or guess one") + "."
+        )
         context_parts.extend(match["document"] for match in retrieved)
         context = "\n".join(context_parts) or "No profile information is available yet."
 

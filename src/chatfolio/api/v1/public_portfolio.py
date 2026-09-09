@@ -1,10 +1,18 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
 
 from chatfolio.api.deps import DbSessionDep, StorageBackendDep
 from chatfolio.core.exceptions import NotFoundError, ServiceUnavailableError
+from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import SectionType
-from chatfolio.models.profile import Education, Experience, Project, Skill
+from chatfolio.models.profile import (
+    CandidateProfile,
+    Education,
+    Experience,
+    JobType,
+    Project,
+    Skill,
+)
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.profile import (
     EducationResponse,
@@ -12,7 +20,7 @@ from chatfolio.schemas.profile import (
     ProjectResponse,
     SkillResponse,
 )
-from chatfolio.schemas.public_portfolio import PublicChatfolioResponse
+from chatfolio.schemas.public_portfolio import PortfolioSearchResult, PublicChatfolioResponse
 from chatfolio.services.portfolio_service import PublicPortfolioService
 
 router = APIRouter(prefix="/public/chatfolio", tags=["public"])
@@ -20,6 +28,61 @@ router = APIRouter(prefix="/public/chatfolio", tags=["public"])
 
 def _service(session: DbSessionDep) -> PublicPortfolioService:
     return PublicPortfolioService(session, ProfileRepository(session))
+
+
+async def _build_response(
+    service: PublicPortfolioService, chatfolio: PublicChatfolio, profile: CandidateProfile
+) -> PublicChatfolioResponse:
+    sections = await service.list_approved_sections(chatfolio.profile_id)
+    experiences = await service.list_children(Experience, chatfolio.profile_id)
+    projects = await service.list_children(Project, chatfolio.profile_id)
+    skills = await service.list_children(Skill, chatfolio.profile_id)
+    education = await service.list_children(Education, chatfolio.profile_id)
+    recruiter_count = await service.count_identified_recruiters(chatfolio.id)
+
+    return PublicChatfolioResponse(
+        slug=chatfolio.slug,
+        full_name=profile.full_name,
+        title=profile.title,
+        location=profile.location,
+        job_type=profile.job_type,
+        contact_email=profile.contact_email,
+        phone=profile.phone,
+        social_links=profile.social_links,
+        intro=sections.get(SectionType.INTRO),
+        summary=sections.get(SectionType.SUMMARY),
+        experiences=[ExperienceResponse.model_validate(e) for e in experiences],
+        projects=[ProjectResponse.model_validate(p) for p in projects],
+        skills=[SkillResponse.model_validate(s) for s in skills],
+        education=[EducationResponse.model_validate(e) for e in education],
+        contact_cta_config=chatfolio.contact_cta_config,
+        cv_downloadable=chatfolio.cv_downloadable,
+        recruiter_count=recruiter_count,
+    )
+
+
+@router.get("/search", response_model=list[PortfolioSearchResult], tags=["public"])
+async def search_public_chatfolios(
+    session: DbSessionDep,
+    username: str | None = Query(default=None, description="Partial match on the public slug."),
+    location: str | None = Query(default=None, description="Partial match on candidate location."),
+    job_type: JobType | None = Query(default=None, description="Remote, onsite, or hybrid."),
+    field: str | None = Query(
+        default=None, description="Partial match on candidate title, e.g. 'Software Engineer'."
+    ),
+) -> list[PortfolioSearchResult]:
+    service = _service(session)
+    matches = await service.search_published(
+        username=username, location=location, job_type=job_type, field=field
+    )
+    return [
+        PortfolioSearchResult(
+            slug=chatfolio.slug,
+            full_name=profile.full_name,
+            recruiter_count=await service.count_identified_recruiters(chatfolio.id),
+        )
+        for chatfolio, profile in matches
+    ]
 
 
 @router.get("/{slug}", response_model=None)
@@ -44,32 +107,9 @@ async def get_public_chatfolio(
         # with a confusing AttributeError instead of a clean error — raise explicitly.
         raise ServiceUnavailableError("This Chatfolio is temporarily unavailable.")
 
-    sections = await service.list_approved_sections(chatfolio.profile_id)
-    experiences = await service.list_children(Experience, chatfolio.profile_id)
-    projects = await service.list_children(Project, chatfolio.profile_id)
-    skills = await service.list_children(Skill, chatfolio.profile_id)
-    education = await service.list_children(Education, chatfolio.profile_id)
-    recruiter_count = await service.count_identified_recruiters(chatfolio.id)
+    response = await _build_response(service, chatfolio, profile)
     await service.record_visit(chatfolio.id)
-
-    return PublicChatfolioResponse(
-        slug=chatfolio.slug,
-        full_name=profile.full_name,
-        title=profile.title,
-        location=profile.location,
-        contact_email=profile.contact_email,
-        phone=profile.phone,
-        social_links=profile.social_links,
-        intro=sections.get(SectionType.INTRO),
-        summary=sections.get(SectionType.SUMMARY),
-        experiences=[ExperienceResponse.model_validate(e) for e in experiences],
-        projects=[ProjectResponse.model_validate(p) for p in projects],
-        skills=[SkillResponse.model_validate(s) for s in skills],
-        education=[EducationResponse.model_validate(e) for e in education],
-        contact_cta_config=chatfolio.contact_cta_config,
-        cv_downloadable=chatfolio.cv_downloadable,
-        recruiter_count=recruiter_count,
-    )
+    return response
 
 
 @router.get("/{slug}/cv", response_model=None)
