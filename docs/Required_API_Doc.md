@@ -306,6 +306,82 @@ today, per §8's own note that it's "plain point-in-time counts, no time-series/
 
 ---
 
+## 7. Recruiter — Portfolio search & candidate job type (implemented 2026-09-09)
+
+Unlike every other section above, this one is **done** — included here so the frontend
+knows the shape to build against, not as a gap. Closes a real gap that existed until
+now: a recruiter could only reach a candidate's Chatfolio by already knowing its exact
+slug (`GET /public/chatfolio/{slug}`); there was no way to discover candidates by
+location, work mode, or role.
+
+### Candidate job type — `remote` | `onsite` | `hybrid`
+
+`CandidateProfile` has a new nullable `job_type` field, set the same way as every other
+profile field:
+
+```jsonc
+// PATCH /api/v1/profiles/me
+{ "job_type": "remote" }
+
+// 200 OK — GET/PATCH /api/v1/profiles/me now both include:
+{ "...": "...", "job_type": "remote" }
+```
+
+It's also included in the public/recruiter-facing payload:
+
+```jsonc
+// GET /api/v1/public/chatfolio/{slug} now includes:
+{ "...": "...", "job_type": "remote" }
+```
+
+`job_type` is one of `"remote"`, `"onsite"`, `"hybrid"`, or `null` if the candidate
+hasn't set it. It also feeds the recruiter chat (see note below) and the vector store,
+so an "are you open to remote roles?" question in chat gets grounded in the real value
+instead of the generic fallback.
+
+### `GET /api/v1/public/chatfolio/search` — no auth required
+
+```
+GET /api/v1/public/chatfolio/search?username=ada&location=dhaka&job_type=remote&field=engineer
+```
+
+All four query params are optional and combine with AND; omit any/all to broaden the
+search. `username` matches the candidate's public slug, `field` matches their title
+(e.g. "Software Engineer") — both case-insensitive partial matches. `location` is a
+case-insensitive partial match on the candidate's profile location. `job_type` is an
+exact match on one of `remote` | `onsite` | `hybrid`. Only published Chatfolios are ever
+returned, same guarantee as the single-slug endpoint.
+
+```jsonc
+// 200 OK — plain array, same convention as every other list endpoint. Deliberately
+// lightweight: just enough to render a results list and link into GET /{slug} for the
+// full profile — not the full PublicChatfolioResponse shape.
+[
+  { "slug": "ada-lovelace-4f2a1c", "full_name": "Ada Lovelace", "recruiter_count": 3 }
+]
+```
+
+Results are ordered by `published_at` descending (most recently published first),
+capped at 25. No pagination params yet — add `limit`/`offset` here if the result set
+ever needs to grow past that.
+
+**Frontend consumer**: net-new — there's no recruiter-facing search UI yet. Whoever
+builds one should link each result's `slug` into the existing single-portfolio page
+(`GET /public/chatfolio/{slug}`) for the full profile.
+
+### Recruiter chat contact-info fix
+
+Not a new endpoint, but worth flagging since it changes chat behavior the frontend may
+have compensated for: recruiter chat (`POST /public/chat/sessions/{id}/messages`)
+previously had no grounding for the candidate's real `contact_email`/`phone` at all, so
+a "how do I reach you?" question could get a fabricated or wrong email. The chat prompt
+now always includes the candidate's actual `contact_email`/`phone`/`location`/`job_type`
+from their profile (never AI-generated text) and is instructed to repeat them verbatim
+or say the detail isn't provided — never invent one. No response shape changed; only
+answer *accuracy* for contact/location/work-mode questions.
+
+---
+
 ## Summary table
 
 | Section | Endpoint(s) needed | Paginated? | Frontend file |
@@ -316,3 +392,4 @@ today, per §8's own note that it's "plain point-in-time counts, no time-series/
 | Admin roles | `GET/POST/PATCH/DELETE /admin/roles(/{id})` | List only (`limit`/`offset`) | `src/app/admin/roles/page.tsx` |
 | Admin permissions | `GET/POST/PATCH/DELETE /admin/permissions(/{id})` | List only (`limit`/`offset`) | `src/app/admin/permissions/page.tsx` |
 | Admin platform analytics | `GET /admin/metrics` (extended) or `GET /admin/analytics` | No | `src/app/admin/page.tsx` |
+| Recruiter portfolio search — **done** | `GET /public/chatfolio/search`, `job_type` on `PATCH /profiles/me` | Capped at 25, no `limit`/`offset` yet | net-new recruiter search UI |

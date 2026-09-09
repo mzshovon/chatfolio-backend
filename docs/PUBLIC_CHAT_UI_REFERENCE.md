@@ -43,6 +43,7 @@ Everything needed to render a candidate's public page in one call.
   "full_name": "Ada Lovelace",
   "title": "Backend Engineer",
   "location": "London, UK",
+  "job_type": "remote",                      // nullable — "remote" | "onsite" | "hybrid"
   "contact_email": "ada@example.com",       // nullable
   "phone": null,                             // nullable
   "social_links": { "github": "https://github.com/ada", "linkedin": "..." },
@@ -100,6 +101,36 @@ Everything needed to render a candidate's public page in one call.
   meaningfully smaller, more specific number than either.
 - Only **approved** content is ever returned here; there's no way to accidentally see a
   candidate's draft/unpublished edits through this endpoint.
+
+### `GET /api/v1/public/chatfolio/search`
+
+Recruiter-facing discovery: find candidates without already knowing their slug. All query
+params are optional and combine with AND — call with none of them for the 25 most recently
+published Chatfolios.
+
+| Param | Match type | Example |
+|---|---|---|
+| `username` | Case-insensitive partial match on the slug | `?username=ada` |
+| `location` | Case-insensitive partial match on the candidate's location | `?location=london` |
+| `job_type` | Exact match, one of `remote` \| `onsite` \| `hybrid` | `?job_type=remote` |
+| `field` | Case-insensitive partial match on the candidate's title, e.g. "Software Engineer" | `?field=engineer` |
+
+```jsonc
+// GET /api/v1/public/chatfolio/search?location=london&job_type=remote
+// 200 OK — plain array, deliberately lightweight (not the full portfolio payload above)
+[
+  { "slug": "ada-lovelace", "full_name": "Ada Lovelace", "recruiter_count": 6 }
+]
+```
+
+**Notes for the UI:**
+- This is a *results list*, not a profile page — use each `slug` to link into
+  `GET /api/v1/public/chatfolio/{slug}` (above) for the full profile once a recruiter picks a
+  result.
+- Only published Chatfolios are ever returned, same guarantee as the single-slug endpoint.
+- Results are ordered most-recently-published first, capped at 25 — there's no `limit`/`offset`
+  yet, so don't build pagination controls against this endpoint until that's added.
+- An empty array is a normal "no matches" response, not an error — don't treat `[]` as a `404`.
 
 ### `GET /api/v1/public/chatfolio/{slug}/cv`
 
@@ -172,6 +203,13 @@ contact me directly for details."* There's no streaming — replies come back as
 response per call, so a simple "sending..." indicator (not a token-by-token typing effect) is
 the honest UX. A real LLM round-trip currently averages ~4s p50/p95 (measured under load,
 `scripts/load_test_chat.py`) — design the sending indicator for that timescale, not sub-second.
+
+**`contact_request` and `availability_inquiry` accuracy:** every reply is now grounded in the
+candidate's real `contact_email`/`phone`/`location`/`job_type` straight from their profile
+(never fabricated or inferred) — a "how do I reach you?" question gets back the exact
+`contact_email`/`phone` from the portfolio payload above, or an honest "not provided" if the
+candidate hasn't set one, never a guessed address. Nothing about the response shape changed;
+this only affects answer accuracy for contact/location/work-mode questions.
 
 **Persisting `session_id` client-side:** store it in memory (a React/Vue state variable, a
 closure) for the page's lifetime. `sessionStorage` is fine too if the widget needs to survive a
