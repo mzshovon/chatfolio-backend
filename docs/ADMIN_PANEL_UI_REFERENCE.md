@@ -697,6 +697,12 @@ Read-only. Feedback is submitted anonymously through the public, unauthenticated
 way other admin lists do. `message` may be `null` (it's optional on submission); `nps_score` is
 always present, `0`-`5`.
 
+`created_at` is UTC ISO 8601, same convention as every other timestamp in this API — the backend
+deliberately doesn't localize it. On the Feedback list page, render it in the viewer's own local
+time (e.g. `new Date(created_at).toLocaleString()` with explicit `day`/`month`/`year`/`hour`/
+`minute` options, or a date library), formatted as `DD/MM/YYYY, hh:mm AM/PM` — e.g.
+`22/11/2026, 12:05 AM`. Don't display the raw UTC string to the admin.
+
 ### 8.1 Roles & Permissions — data management only, **not real access control**
 
 Powers `src/app/admin/roles/page.tsx` and `src/app/admin/permissions/page.tsx`, which were
