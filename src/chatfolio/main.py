@@ -15,6 +15,7 @@ from chatfolio.api.v1.auth import router as auth_router
 from chatfolio.api.v1.custom_domain import router as custom_domain_router
 from chatfolio.api.v1.cv import router as cv_router
 from chatfolio.api.v1.dashboard import router as dashboard_router
+from chatfolio.api.v1.feedback import router as feedback_router
 from chatfolio.api.v1.health import router as health_router
 from chatfolio.api.v1.portfolio_settings import router as portfolio_settings_router
 from chatfolio.api.v1.profiles import router as profiles_router
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(custom_domain_router, prefix="/api/v1")
     app.include_router(public_portfolio_router, prefix="/api/v1")
     app.include_router(public_chat_router, prefix="/api/v1")
+    app.include_router(feedback_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(admin_rbac_router, prefix="/api/v1")

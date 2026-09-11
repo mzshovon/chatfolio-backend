@@ -14,7 +14,9 @@ from chatfolio.schemas.admin import (
     AdminUpdateUserRequest,
 )
 from chatfolio.schemas.auth import UserResponse
+from chatfolio.schemas.feedback import FeedbackResponse
 from chatfolio.services.admin_service import AdminService
+from chatfolio.services.feedback_service import FeedbackService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -166,3 +168,14 @@ async def unpublish_chatfolio(
         current_user, chatfolio_id
     )
     return _to_chatfolio_response(chatfolio, owner_email)
+
+
+@router.get("/feedback", response_model=list[FeedbackResponse])
+async def list_feedback(
+    current_user: AdminUserDep,
+    session: DbSessionDep,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[FeedbackResponse]:
+    feedback = await FeedbackService(session).list_feedback(limit=limit, offset=offset)
+    return [FeedbackResponse.model_validate(item) for item in feedback]

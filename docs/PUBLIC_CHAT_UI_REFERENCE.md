@@ -220,7 +220,42 @@ session on a new visit is the intended behavior.
 
 ---
 
-## 4. Suggested widget flow
+## 4. Feedback
+
+### `POST /api/v1/public/feedback`
+
+Open, general product feedback — no auth required, and not tied to any candidate's slug or a
+chat session. Use this for a standalone "rate your experience" widget, not as part of the chat
+flow above.
+
+```jsonc
+// Request
+{ "nps_score": 4, "message": "Loved the chat experience!" }
+// nps_score: integer 0-5, required. message: optional, ≤2100 chars.
+
+// 201 Created
+{
+  "id": "9856d9d6-65dd-4102-8b3d-99bb272c6502",
+  "nps_score": 4,
+  "message": "Loved the chat experience!",
+  "created_at": "2026-09-11T10:00:00Z"
+}
+```
+
+`422` if `nps_score` is missing or outside `0`-`5`, or if `message` is longer than 2100
+characters. `message` can be omitted entirely (or sent as `null`) — only `nps_score` is
+mandatory.
+
+**Rate limit: 10 submissions per minute per IP**, same handling as the chat session-start limit
+above — on `429`, show a generic "please try again in a moment."
+
+There's no way to read feedback back from this document's endpoints — submissions are
+admin-only to view (`GET /admin/feedback`, see the companion
+[`ADMIN_PANEL_UI_REFERENCE.md`](./ADMIN_PANEL_UI_REFERENCE.md)).
+
+---
+
+## 5. Suggested widget flow
 
 ```
 on widget mount:

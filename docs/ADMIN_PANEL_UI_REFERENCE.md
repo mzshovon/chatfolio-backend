@@ -686,6 +686,17 @@ down — same effect as the candidate's own unpublish button, just admin-trigger
 here writes an audit log entry server-side; no separate audit-log endpoint exists yet to display
 that history in the UI, but the action itself is always recorded.
 
+### `GET /api/v1/admin/feedback?limit=20&offset=0`
+```jsonc
+[{ "id": "uuid", "nps_score": 4, "message": "Loved the chat experience!",
+   "created_at": "2026-09-11T10:00:00Z" }]
+```
+Read-only. Feedback is submitted anonymously through the public, unauthenticated
+`POST /public/feedback` (see companion [`PUBLIC_CHAT_UI_REFERENCE.md`](./PUBLIC_CHAT_UI_REFERENCE.md))
+— there's no submitting user to join against, so rows have no `owner_email`/`user_id` field the
+way other admin lists do. `message` may be `null` (it's optional on submission); `nps_score` is
+always present, `0`-`5`.
+
 ### 8.1 Roles & Permissions — data management only, **not real access control**
 
 Powers `src/app/admin/roles/page.tsx` and `src/app/admin/permissions/page.tsx`, which were
