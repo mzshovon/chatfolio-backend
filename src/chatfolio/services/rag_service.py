@@ -120,20 +120,28 @@ class RAGService:
         if summary:
             context_parts.append(f"Career summary: {summary}")
         # Verified facts pulled directly from the candidate's own profile row — never from
-        # generated/embedded text — so contact and work-mode questions are always answered from
-        # the single source of truth instead of the model guessing from context clues.
+        # generated/embedded text — so work-mode/location questions are always answered from the
+        # single source of truth instead of the model guessing from context clues.
         context_parts.append(
             f"Preferred work mode: {job_type or 'not specified by the candidate'}."
         )
         context_parts.append(f"Location: {location or 'not specified by the candidate'}.")
-        context_parts.append(
-            "Contact email: "
-            + (contact_email or "not provided — do not invent or guess one")
-            + "."
-        )
-        context_parts.append(
-            "Contact phone: " + (phone or "not provided — do not invent or guess one") + "."
-        )
+        # Contact details are deliberately withheld from the model's context entirely unless the
+        # classifier has already flagged this message as a contact request — a prompt-only "don't
+        # volunteer this" instruction was tried and observed to still leak the email/phone into
+        # unrelated replies (e.g. "are you open to new roles?"), since the model treated present
+        # context as fair game to mention. Not being in the context at all is the reliable
+        # guardrail; CHAT_SYSTEM_PROMPT_TEMPLATE's contact-sharing rule is the second layer for
+        # the (rarer) case where the classifier itself mislabels a contact-seeking message.
+        if intent == RecruiterIntent.CONTACT_REQUEST:
+            context_parts.append(
+                "Contact email: "
+                + (contact_email or "not provided — do not invent or guess one")
+                + "."
+            )
+            context_parts.append(
+                "Contact phone: " + (phone or "not provided — do not invent or guess one") + "."
+            )
         context_parts.extend(match["document"] for match in retrieved)
         context = "\n".join(context_parts) or "No profile information is available yet."
 

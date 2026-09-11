@@ -204,12 +204,33 @@ response per call, so a simple "sending..." indicator (not a token-by-token typi
 the honest UX. A real LLM round-trip currently averages ~4s p50/p95 (measured under load,
 `scripts/load_test_chat.py`) — design the sending indicator for that timescale, not sub-second.
 
-**`contact_request` and `availability_inquiry` accuracy:** every reply is now grounded in the
+**`contact_request` and `availability_inquiry` accuracy:** every reply is grounded in the
 candidate's real `contact_email`/`phone`/`location`/`job_type` straight from their profile
 (never fabricated or inferred) — a "how do I reach you?" question gets back the exact
 `contact_email`/`phone` from the portfolio payload above, or an honest "not provided" if the
 candidate hasn't set one, never a guessed address. Nothing about the response shape changed;
 this only affects answer accuracy for contact/location/work-mode questions.
+
+**Contact info is only shared on contact intent, not proactively.** The backend only includes
+the candidate's email/phone in the model's context at all when the message is classified as a
+contact request — asking for the number/email directly, asking how to contact/call/message the
+candidate, saying they (or their HR) will send an interview invite or follow up, in English,
+Bangla, or Banglish. For every other message (including "are you open to new roles?", "tell me
+about your experience," general interest/fit questions), the model never even sees the contact
+details, so it structurally cannot leak them. Don't build UI that assumes every reply might
+contain contact info; only look for it in response to an actual contact-style question.
+
+**Answers are meant to stay scoped to the exact question asked, even across turns.** Conversation
+history (the last 5 messages) is used for continuity — pronouns, follow-ups, tone — and is
+prompted to never be treated as a source of what to answer with. If a recruiter asks two
+related-but-distinct follow-up questions (e.g. "what cultural challenges have you faced?" then
+"what technical challenges have you faced?"), each reply is instructed to cover only the category
+just asked, not fold in the previous turn's answer "for completeness." Unlike the contact-sharing
+guarantee above (which is structurally enforced — the data simply isn't in context unless
+warranted), this is prompt-level guidance to the generation model, not a hard backend guarantee —
+if a source passage blends multiple categories in one sentence, the model can still occasionally
+echo both. Report recurring cases; the fix there is finer-grained retrieval chunking, a larger
+follow-up.
 
 **Persisting `session_id` client-side:** store it in memory (a React/Vue state variable, a
 closure) for the page's lifetime. `sessionStorage` is fine too if the widget needs to survive a

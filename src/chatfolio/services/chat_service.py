@@ -14,7 +14,12 @@ from chatfolio.services.rag_service import RAGService
 
 COOLDOWN_SECONDS = 2.0
 RAPID_FIRE_FLAG_THRESHOLD = 5
-HISTORY_WINDOW = 6
+# Last 5 messages (not 5 turns) — enough for the model to track the immediate thread (what was
+# just discussed, pronouns/follow-ups) without so much history that an old, topically-adjacent
+# answer (e.g. "cultural challenges") bleeds into a new, distinct question (e.g. "technical
+# challenges"). CHAT_SYSTEM_PROMPT_TEMPLATE's own instruction is the primary guard against that;
+# this window keeps the raw material it has to work with tight and recent.
+HISTORY_WINDOW = 5
 
 
 class ChatService:
