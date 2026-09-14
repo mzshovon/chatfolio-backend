@@ -14,7 +14,7 @@ from chatfolio.services.portfolio_service import PortfolioService
 from chatfolio.services.profile_service import ProfileService
 
 DEFAULT_PAGE_SIZE = 20
-ANALYTICS_WINDOW_DAYS = 30
+ANALYTICS_WINDOW_DAYS = 7
 
 
 class DashboardAnalytics:
