@@ -17,6 +17,7 @@ from chatfolio.api.v1.cv import router as cv_router
 from chatfolio.api.v1.dashboard import router as dashboard_router
 from chatfolio.api.v1.feedback import router as feedback_router
 from chatfolio.api.v1.health import router as health_router
+from chatfolio.api.v1.meeting_settings import router as meeting_settings_router
 from chatfolio.api.v1.portfolio_settings import router as portfolio_settings_router
 from chatfolio.api.v1.profiles import router as profiles_router
 from chatfolio.api.v1.public_chat import router as public_chat_router
@@ -31,6 +32,7 @@ from chatfolio.core.security_headers import SecurityHeadersMiddleware
 from chatfolio.vectorstore.local_embedder import embed_texts
 
 _DEFAULT_JWT_SECRET = "change-me-in-env-generate-a-real-random-secret-please"
+_DEFAULT_TOKEN_ENCRYPTION_KEY = "change-me-in-env-generate-with-fernet-generate-key"
 
 
 @asynccontextmanager
@@ -58,6 +60,16 @@ def create_app() -> FastAPI:
         raise RuntimeError(
             "SECURITY_JWT_SECRET is still the default placeholder outside a local environment. "
             "Set a real, random secret before starting the app."
+        )
+
+    if (
+        settings.env != Environment.LOCAL
+        and settings.security.token_encryption_key.get_secret_value()
+        == _DEFAULT_TOKEN_ENCRYPTION_KEY
+    ):
+        raise RuntimeError(
+            "SECURITY_TOKEN_ENCRYPTION_KEY is still the default placeholder outside a local "
+            "environment. Generate one with Fernet.generate_key() before starting the app."
         )
 
     app = FastAPI(title="Chatfolio API", version="0.1.0", lifespan=_lifespan)
@@ -93,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(public_chat_router, prefix="/api/v1")
     app.include_router(feedback_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
+    app.include_router(meeting_settings_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(admin_rbac_router, prefix="/api/v1")
 

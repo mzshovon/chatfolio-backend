@@ -8,6 +8,7 @@ from chatfolio.models import (  # noqa: F401
     domain,
     embedding,
     feedback,
+    meeting,
     portfolio_section,
     profile,
     rbac,

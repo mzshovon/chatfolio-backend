@@ -23,6 +23,7 @@ class RecruiterIntent(StrEnum):
     ROLE_FIT_INQUIRY = "role_fit_inquiry"
     AVAILABILITY_INQUIRY = "availability_inquiry"
     CONTACT_REQUEST = "contact_request"
+    MEETING_REQUEST = "meeting_request"
     GENERAL_INTRODUCTION = "general_introduction"
     UNKNOWN = "unknown"
 

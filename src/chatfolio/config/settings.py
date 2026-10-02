@@ -89,6 +89,12 @@ class SecuritySettings(_Base):
     two_factor_challenge_ttl_minutes: int = 5
     otp_ttl_minutes: int = 10
     otp_max_attempts: int = 5
+    google_oauth_state_ttl_minutes: int = 10
+    # Fernet key for encrypting third-party secrets at rest (Google refresh/access tokens) —
+    # unlike jwt_secret this must be reversible, since the backend has to present the plaintext
+    # token back to Google later. Generate with `Fernet.generate_key()`; create_app() refuses to
+    # start with this placeholder outside `local`, same guard as jwt_secret.
+    token_encryption_key: SecretStr = SecretStr("change-me-in-env-generate-with-fernet-generate-key")
 
 
 class AppSettings(_Base):
@@ -176,6 +182,26 @@ class LLMSettings(_Base):
         return override or self.default_provider
 
 
+class GoogleOAuthSettings(_Base):
+    model_config = SettingsConfigDict(env_prefix="GOOGLE_", env_file=".env", extra="ignore")
+
+    client_id: str | None = None
+    client_secret: SecretStr | None = None
+    # Must byte-for-byte match a "Authorized redirect URI" registered in the Google Cloud
+    # Console for this client — Google rejects the exchange otherwise. Points at this backend
+    # directly (Google redirects the browser here after consent), not at the frontend.
+    redirect_uri: str = "http://localhost:8000/api/v1/meeting-settings/google/callback"
+    scopes: list[str] = [
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.freebusy",
+    ]
+    authorize_url: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    token_url: str = "https://oauth2.googleapis.com/token"
+    revoke_url: str = "https://oauth2.googleapis.com/revoke"
+    userinfo_url: str = "https://www.googleapis.com/oauth2/v2/userinfo"
+    calendar_events_url: str = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+
+
 class FeatureFlags(_Base):
     model_config = SettingsConfigDict(env_prefix="FEATURE_", env_file=".env", extra="ignore")
 
@@ -202,6 +228,7 @@ class Settings(_Base):
     security: SecuritySettings = SecuritySettings()
     vectorstore: VectorStoreSettings = VectorStoreSettings()
     llm: LLMSettings = LLMSettings()
+    google_oauth: GoogleOAuthSettings = GoogleOAuthSettings()
     features: FeatureFlags = FeatureFlags()
     observability: ObservabilitySettings = ObservabilitySettings()
     app: AppSettings = AppSettings()
