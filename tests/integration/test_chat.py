@@ -11,6 +11,7 @@ from chatfolio.api.deps import get_llm_provider_factory, get_vector_store
 from chatfolio.config.settings import LLMTask
 from chatfolio.db.session import get_sessionmaker
 from chatfolio.llm.base import LLMProvider
+from chatfolio.llm.prompts.chat import CHAT_FALLBACK_RESPONSES
 from chatfolio.main import app
 from chatfolio.models.chat import ChatMessage, ChatSession, RecruiterMetadata
 from tests.factories.fake_llm import FakeLLMFactory, FakeLLMProvider
@@ -134,7 +135,7 @@ async def test_informational_intent_without_retrieval_skips_generation_and_falls
 
     assert response.status_code == 200
     body = response.json()
-    assert "do not have that information" in body["content"]
+    assert body["content"] in CHAT_FALLBACK_RESPONSES
     assert LLMTask.CHAT not in factory.calls
     # Intent is classified before the guardrail decides whether to generate at all, so it must
     # still be on the response even on the fallback path that skips the CHAT LLM call entirely.

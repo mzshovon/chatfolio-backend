@@ -14,7 +14,12 @@ from chatfolio.models.chatfolio import PortfolioVisit, PublicChatfolio
 from chatfolio.models.cv import CVStatus, UploadedCV
 from chatfolio.models.mixins import ProfileChildMixin
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
-from chatfolio.models.profile import CandidateProfile, JobType, ProfileStatus
+from chatfolio.models.profile import (
+    CandidateProfile,
+    Experience,
+    JobType,
+    ProfileStatus,
+)
 from chatfolio.models.user import User
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.portfolio_settings import PortfolioSettingsUpdateRequest
@@ -175,7 +180,7 @@ class PublicPortfolioService:
     ) -> list[tuple[PublicChatfolio, CandidateProfile]]:
         """Recruiter-facing search across published Chatfolios. Every filter is optional and
         combines with the others (AND) — `username` matches the public slug, `field` matches the
-        candidate's title (e.g. "Software Engineer"), both case-insensitive partial matches.
+        candidate's title, any experience role or bio (e.g. "Software Engineer"), both case-insensitive partial matches.
         Never touches unpublished/draft profiles, same guarantee as `get_published_by_slug`.
         """
         stmt = (
@@ -190,7 +195,21 @@ class PublicPortfolioService:
         if job_type:
             stmt = stmt.where(CandidateProfile.job_type == job_type)
         if field:
-            stmt = stmt.where(CandidateProfile.title.ilike(f"%{field}%"))
+            pattern = f"%{field.strip()}%"
+            # Title is often empty (e.g. profile built from a CV), so also match any
+            # experience role and the bio.
+            role_match = (
+                select(Experience.id)
+                .where(Experience.profile_id == CandidateProfile.id, Experience.role.ilike(pattern))
+                .exists()
+            )
+            stmt = stmt.where(
+                or_(
+                    CandidateProfile.title.ilike(pattern),
+                    CandidateProfile.bio.ilike(pattern),
+                    role_match,
+                )
+            )
 
         stmt = stmt.order_by(PublicChatfolio.published_at.desc()).limit(limit)
         result = await self._session.execute(stmt)

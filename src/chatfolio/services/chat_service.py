@@ -75,8 +75,6 @@ class ChatService:
             summary=sections.get(SectionType.SUMMARY),
             location=profile.location,
             job_type=profile.job_type.value if profile.job_type else None,
-            contact_email=profile.contact_email,
-            phone=profile.phone,
             retrieved=retrieved,
             history=history,
             user_message=content,

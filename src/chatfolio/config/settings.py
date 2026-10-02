@@ -159,6 +159,12 @@ class LLMSettings(_Base):
     # so this threshold doesn't need to carry the entire anti-hallucination burden alone.
     retrieval_similarity_threshold: float = 0.25
 
+    # None (the default) loads the bundled chat_prompts.toml next to llm/prompts/chat.py. Set
+    # LLM_PROMPTS_CONFIG_PATH to an absolute path (e.g. one mounted into the container from
+    # outside the image) to tune the chat assistant's tone/rules without a code change or
+    # rebuild — see that file's own header comment for the format.
+    prompts_config_path: str | None = None
+
     def provider_for(self, task: LLMTask) -> LLMProviderName:
         override = {
             LLMTask.EXTRACTION: self.provider_for_extraction,

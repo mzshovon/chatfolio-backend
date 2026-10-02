@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import uuid
 from collections.abc import Callable
 
@@ -10,6 +11,7 @@ from chatfolio.core.exceptions import ServiceUnavailableError
 from chatfolio.llm.base import LLMFactory, Message
 from chatfolio.llm.prompts.chat import (
     CHAT_FALLBACK_RESPONSE,
+    CHAT_FALLBACK_RESPONSES,
     CHAT_SYSTEM_PROMPT_TEMPLATE,
     INTENT_CLASSIFICATION_SYSTEM_PROMPT,
 )
@@ -99,15 +101,13 @@ class RAGService:
         summary: str | None,
         location: str | None,
         job_type: str | None,
-        contact_email: str | None,
-        phone: str | None,
         retrieved: list[QueryMatch],
         history: list[Message],
         user_message: str,
         intent: RecruiterIntent,
     ) -> tuple[str, int]:
         if intent in INFORMATIONAL_INTENTS and not retrieved:
-            return CHAT_FALLBACK_RESPONSE, 0
+            return random.choice(CHAT_FALLBACK_RESPONSES), 0
 
         if not retrieved:
             logger.warning(
@@ -126,23 +126,26 @@ class RAGService:
             f"Preferred work mode: {job_type or 'not specified by the candidate'}."
         )
         context_parts.append(f"Location: {location or 'not specified by the candidate'}.")
-        # Contact details are deliberately withheld from the model's context entirely unless the
-        # classifier has already flagged this message as a contact request — a prompt-only "don't
-        # volunteer this" instruction was tried and observed to still leak the email/phone into
-        # unrelated replies (e.g. "are you open to new roles?"), since the model treated present
-        # context as fair game to mention. Not being in the context at all is the reliable
-        # guardrail; CHAT_SYSTEM_PROMPT_TEMPLATE's contact-sharing rule is the second layer for
-        # the (rarer) case where the classifier itself mislabels a contact-seeking message.
-        if intent == RecruiterIntent.CONTACT_REQUEST:
-            context_parts.append(
-                "Contact email: "
-                + (contact_email or "not provided — do not invent or guess one")
-                + "."
-            )
-            context_parts.append(
-                "Contact phone: " + (phone or "not provided — do not invent or guess one") + "."
-            )
-        context_parts.extend(match["document"] for match in retrieved)
+        # Contact details (email/phone) are never put in the model's context, even for a
+        # confirmed contact request — a raw digit/address string being generated back out through
+        # the LLM is how it ends up retyped, reformatted, or partially masked (e.g. "***" in a
+        # phone number). The `intent` field returned alongside every reply already tells the
+        # frontend when a turn is a contact request; the frontend renders the real, verified
+        # email/phone from the portfolio's own data for that case, entirely outside the model's
+        # generated text. CHAT_SYSTEM_PROMPT_TEMPLATE's contact-sharing rule only asks the model
+        # for a short acknowledgement sentence, never the details themselves.
+        #
+        # Retrieved chunks are only added for intents that are actually asking about a specific
+        # documented fact. Retrieval runs on the raw message text alone regardless of intent, so a
+        # vague or enthusiastic message ("we'd like to discuss with you") can still land an
+        # embedding match against whatever the recruiter last asked about (e.g. a prior experience
+        # question) — if that stale chunk were added here, the model would have ready-made
+        # material to repeat verbatim instead of responding to what this turn actually said.
+        # Keeping conversational replies grounded in just intro/summary, per this class's
+        # docstring, is what makes the anti-repetition instruction in CHAT_SYSTEM_PROMPT_TEMPLATE
+        # reliable rather than a request the model has to fight its own context to follow.
+        if intent in INFORMATIONAL_INTENTS:
+            context_parts.extend(match["document"] for match in retrieved)
         context = "\n".join(context_parts) or "No profile information is available yet."
 
         system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
