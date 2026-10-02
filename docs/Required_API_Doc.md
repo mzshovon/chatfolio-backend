@@ -346,8 +346,10 @@ GET /api/v1/public/chatfolio/search?username=ada&location=dhaka&job_type=remote&
 ```
 
 All four query params are optional and combine with AND; omit any/all to broaden the
-search. `username` matches the candidate's public slug, `field` matches their title
-(e.g. "Software Engineer") — both case-insensitive partial matches. `location` is a
+search. `username` matches the candidate's public slug, `field` matches their title,
+the bio, or the role on any of their experiences (e.g. "Software Engineer" — profiles
+built from a CV often have no title set, so the experience roles are what make them
+findable) — both case-insensitive partial matches. `location` is a
 case-insensitive partial match on the candidate's profile location. `job_type` is an
 exact match on one of `remote` | `onsite` | `hybrid`. Only published Chatfolios are ever
 returned, same guarantee as the single-slug endpoint.
@@ -382,6 +384,137 @@ answer *accuracy* for contact/location/work-mode questions.
 
 ---
 
+## 8. Candidate — Google Calendar connection / meeting settings (implemented 2026-09-25)
+
+**Done** — included so the frontend/CMS knows the shape to build against. This is the
+first half of meeting scheduling: a candidate links their Google account so the backend
+can later create events and check availability on their calendar. The connection endpoints
+are followed by `POST /meeting-settings/meetings`, which creates a Google Meet event. All endpoints are under
+`/api/v1/meeting-settings` and require `Authorization: Bearer <access_token>` except the
+Google callback.
+
+### Connect flow (browser redirect, not fetch)
+
+1. Frontend calls `GET /api/v1/meeting-settings/google/connect`:
+
+```jsonc
+// 200 OK
+{ "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?..." }
+```
+
+2. Frontend does a **top-level navigation** (`window.location.href = authorization_url`)
+   — the Google consent screen can't be shown inside a fetch/XHR response.
+3. Google redirects the browser to the backend callback
+   (`GET /api/v1/meeting-settings/google/callback`, `include_in_schema=False`, 20/min
+   rate limit). **The frontend never calls this.** It exchanges the code, stores the
+   tokens, then 302s back to `{FRONTEND_BASE_URL}/dashboard/settings` with a query param:
+
+| Query param | Meaning |
+|---|---|
+| `?meeting_settings=google_connected` | Connected (or reconnected) successfully |
+| `?meeting_settings=google_error` | User denied consent, `state` invalid/expired (10 min TTL), or the code exchange failed |
+
+The settings page should read this param on load, show a success/error toast, and
+re-fetch `GET /meeting-settings`. The user is identified by a signed `state` value, not
+by a bearer token (Google's redirect carries no `Authorization` header).
+
+### `GET /api/v1/meeting-settings` — current connection status
+
+```jsonc
+// 200 OK — not connected
+{ "google_connected": false, "google_account_email": null,
+  "granted_scopes": [], "access_token_expires_at": null, "access_token": null }
+
+// 200 OK — connected
+{ "google_connected": true, "google_account_email": "ada@gmail.com",
+  "granted_scopes": ["https://www.googleapis.com/auth/calendar.events",
+                     "https://www.googleapis.com/auth/calendar.freebusy"],
+  "access_token_expires_at": "2026-09-25T17:00:00Z",
+  "access_token": "ya29...." }
+```
+
+`access_token` is refreshed on the fly if expired or within 5 minutes of expiry, so it is
+always usable at the moment of the response; it is only present when connected. Treat it
+as a secret (don't log or persist it client-side). If the token has expired and Google
+issued no refresh token, this returns **401** — show a "Reconnect Google Calendar"
+button that restarts the connect flow.
+
+### `DELETE /api/v1/meeting-settings/google` — disconnect
+
+`204 No Content`. Revokes the token at Google (best-effort) and deletes the stored
+connection. Idempotent: returns 204 even if nothing was connected.
+
+### `POST /api/v1/meeting-settings/meetings` — schedule a Google Meet (201)
+
+Creates an event with a Google Meet link on the candidate's **primary** calendar and emails
+the invite to the attendee. Requires login and a connected calendar (rate limit 20/min).
+The backend builds the Google payload; the frontend only sends the fields below.
+
+```jsonc
+// request
+{
+  "attendee_email": "recruiter@example.com",   // required
+  "start": "2026-09-19T17:00:00+06:00",        // required, must include a UTC offset ("Z" is fine) and be in the future
+  "duration_minutes": 30,                       // optional, 5-480, default 30
+  "timezone": "Asia/Dhaka",                     // optional IANA name, default "UTC" (display only)
+  "title": "Interview via Chatfolio",           // optional (this is the default)
+  "description": "Interview scheduled through Chatfolio.",  // optional (this is the default)
+  "request_id": "booking-8f3a2c1e"              // optional idempotency key, 8-100 chars
+}
+
+// 201 Created
+{
+  "event_id": "abc123",
+  "status": "confirmed",
+  "meet_link": "https://meet.google.com/abc-defg-hij",   // null in the rare case Google is still provisioning it
+  "calendar_link": "https://www.google.com/calendar/event?eid=...",
+  "title": "Interview via Chatfolio",
+  "start": "2026-09-19T17:00:00+06:00",
+  "end": "2026-09-19T17:30:00+06:00",
+  "timezone": "Asia/Dhaka",
+  "attendee_email": "recruiter@example.com"
+}
+```
+
+Send a stable `request_id` per booking attempt and reuse it on retries (double click,
+timeout) so Google reuses the same Meet conference instead of creating another. Disable the
+submit button while the call is in flight regardless, as the event itself is not de-duplicated.
+
+| Status | When |
+|---|---|
+| 401 | No/invalid bearer token; or Google denied access / token not refreshable — show "Reconnect Google Calendar" |
+| 404 | Google Calendar is not connected |
+| 422 | Invalid email, `start` without offset or in the past, bad `timezone`, `duration_minutes` out of range, or Google rejected the request |
+| 503 | Google integration not configured, or Google Calendar temporarily unavailable |
+
+Needs only the `calendar.events` scope the connect flow already requests.
+
+### Errors
+
+| Status | When |
+|---|---|
+| 401 | Missing/invalid bearer token; or access expired and not refreshable (reconnect) |
+| 503 | `GET /google/connect` when `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` aren't configured |
+
+### Backend configuration (needed before the CMS flow works)
+
+| Env var | Notes |
+|---|---|
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | From a Google Cloud Console OAuth client (Web application) |
+| `GOOGLE_REDIRECT_URI` | Default `http://localhost:8000/api/v1/meeting-settings/google/callback`; must match an Authorized redirect URI in Google Console exactly |
+| `SECURITY_TOKEN_ENCRYPTION_KEY` | Encrypts stored Google tokens (Fernet); the default placeholder is refused outside `ENV=local` |
+| `SECURITY_GOOGLE_OAUTH_STATE_TTL_MINUTES` | Default 10 |
+
+Requested scopes: `calendar.events` and `calendar.freebusy`. Requested with
+`access_type=offline` and `prompt=consent`, so every connect returns a refresh token.
+Tokens are encrypted at rest in the new `google_calendar_connections` table (one row per
+user; reconnecting overwrites it). Run `alembic upgrade head` to create it.
+
+**Frontend consumer**: net-new — a "Google Calendar" card on `/dashboard/settings`
+(connect / connected-as / disconnect, plus handling the `meeting_settings` query param).
+
+---
+
 ## Summary table
 
 | Section | Endpoint(s) needed | Paginated? | Frontend file |
@@ -393,3 +526,4 @@ answer *accuracy* for contact/location/work-mode questions.
 | Admin permissions | `GET/POST/PATCH/DELETE /admin/permissions(/{id})` | List only (`limit`/`offset`) | `src/app/admin/permissions/page.tsx` |
 | Admin platform analytics | `GET /admin/metrics` (extended) or `GET /admin/analytics` | No | `src/app/admin/page.tsx` |
 | Recruiter portfolio search — **done** | `GET /public/chatfolio/search`, `job_type` on `PATCH /profiles/me` | Capped at 25, no `limit`/`offset` yet | net-new recruiter search UI |
+| Google Calendar connection — **done** | `GET /meeting-settings`, `GET /meeting-settings/google/connect`, `DELETE /meeting-settings/google`, `POST /meeting-settings/meetings` (callback is browser-redirect only) | No | `/dashboard/settings` Google Calendar card |

@@ -113,7 +113,7 @@ published Chatfolios.
 | `username` | Case-insensitive partial match on the slug | `?username=ada` |
 | `location` | Case-insensitive partial match on the candidate's location | `?location=london` |
 | `job_type` | Exact match, one of `remote` \| `onsite` \| `hybrid` | `?job_type=remote` |
-| `field` | Case-insensitive partial match on the candidate's title, e.g. "Software Engineer" | `?field=engineer` |
+| `field` | Case-insensitive partial match on the candidate's title, bio, **or the role of any experience**, e.g. "Software Engineer" (a candidate with no title set is still found via their experience roles) | `?field=engineer` |
 
 ```jsonc
 // GET /api/v1/public/chatfolio/search?location=london&job_type=remote
@@ -290,7 +290,87 @@ on user sends message:
   on 429 (cooldown): just re-enable input once the 2s has elapsed, no error toast needed
   on 429 (rate limit) / 503: show an inline error, re-enable input immediately
   on 404: show "chat unavailable", offer to restart (re-run the session-start step)
+
+on "Request a meeting" submit (section 6):
+  POST /public/chat/sessions/{session_id}/meetings with a fresh request_id
+  on 201: show meet_link + time; on 409: hide the action, fall back to the contact CTA
 ```
 
 No polling, no websockets — this is a plain request/response API. If a future phase adds
 streaming, it'll be a separate documented endpoint; don't build around an assumption of one.
+
+---
+
+## 6. Request a Google Meet from the chat
+
+### `POST /api/v1/public/chat/sessions/{session_id}/meetings` — no auth, 201
+
+Lets a recruiter schedule a Google Meet with the candidate from the chat widget. The candidate
+is resolved from the chat session (the same `session_id` as the messages endpoint), never from
+the body — **no `Authorization` header is needed or read**. The backend loads the candidate's
+stored Google token from the DB and, if it is expired or near expiry, refreshes it with Google's
+refresh token automatically; the recruiter never sees any token. If the refresh is rejected (the
+candidate revoked access), the call returns the generic `409` below. The meeting is created on the **candidate's** Google Calendar and Google emails the
+invite to the recruiter's address.
+
+```jsonc
+// request
+{
+  "user_id": "uuid",                            // optional — candidate's user id; if sent it must match the session's candidate, else 404
+  "attendee_email": "recruiter@company.com",   // required — where the invite goes
+  "attendee_name": "Sam Rivera",               // optional, shown in the event title
+  "start": "2026-09-19T17:00:00+06:00",        // required — must include a UTC offset ("Z" is fine), in the future
+  "duration_minutes": 30,                       // optional, 15-120, default 30
+  "timezone": "Asia/Dhaka",                     // optional IANA name, default "UTC"; use Intl.DateTimeFormat().resolvedOptions().timeZone
+  "message": "Would love to discuss the backend role.",  // optional, max 500 chars, added to the event description
+  "request_id": "6b1c2f0e-..."                  // optional idempotency key, 8-100 chars
+}
+
+// 201 Created
+{
+  "meet_link": "https://meet.google.com/abc-defg-hij",   // null in the rare case Google is still provisioning it
+  "title": "Interview via Chatfolio with Sam Rivera",
+  "start": "2026-09-19T17:00:00+06:00",
+  "end": "2026-09-19T17:30:00+06:00",
+  "timezone": "Asia/Dhaka"
+}
+```
+
+**Notes for the UI:**
+- Build `start` from a date/time picker plus the browser's timezone offset
+  (e.g. `new Date(...).toISOString()` gives a valid `Z` value). Naive strings like
+  `2026-09-19T17:00:00` are rejected with `422`.
+- Generate one `request_id` (`crypto.randomUUID()`) per booking attempt and **reuse it on retries**
+  so a double click or timeout retry doesn't create a second Meet. Also disable the submit button
+  while the call is in flight.
+- Render the confirmation as an assistant-style chat bubble with the `meet_link` and the time in
+  the recruiter's timezone, and tell them an invite was emailed to `attendee_email`.
+- The candidate's calendar link, event id and email are deliberately not returned.
+
+| Status | Meaning | Suggested UI |
+|---|---|---|
+| 201 | Meet created, invite emailed | Show `meet_link` + time |
+| 403 | **A meeting was already requested from this chat session** (one successful request per session, ever) | Replace the form with "Meeting requested - check your email for the invite"; don't offer a retry |
+| 404 | Unknown chat session, Chatfolio no longer published, or `user_id` doesn't match the session's candidate | Same as chat's 404: offer to restart the chat |
+| 409 | The candidate isn't accepting meeting requests (calendar not connected or access revoked) — deliberately one generic message | Hide/disable the "Request a meeting" action and point to the contact CTA (`contact_email`) |
+| 422 | Bad email, `start` missing an offset or in the past, bad `timezone`, `duration_minutes` out of range, or Google rejected the request | Inline field errors / "pick a later time" |
+| 429 | Either the IP rate limit (**3 meeting requests per hour**) or the **candidate cool-down: another session got a meeting with this candidate in the last 5 minutes** (each call emails an invite from the candidate's account) | "This candidate was just booked, please try again in a few minutes"; keep the form, allow a later retry |
+| 503 | Google Calendar unavailable or not configured | "Scheduling is temporarily unavailable" + contact CTA |
+
+**Duplicate protection:** a request only counts once Google has created the event, so a failed
+attempt (422/503/409) never uses up the session's one request or starts the cool-down. After a
+`201`, any further request from the same session is a `403`; requests from *other* sessions to
+the same candidate are `429` for 5 minutes after the last successful one. Reusing a `request_id`
+does not bypass either rule. Store "meeting requested" in widget state after a `201` and hide the
+action, rather than relying on the `403`.
+
+**Discovering availability:** the public payloads don't say whether a candidate has a calendar
+connected, so the first `409` is how the widget finds out. Show the meeting action by default,
+and hide it for the rest of the session on a `409`. There's still no free-slots/availability
+endpoint, so the picker can't hide busy times; the candidate sees conflicts on their own calendar.
+
+**Chat itself doesn't schedule.** The assistant's replies don't read the calendar or create events;
+"can we meet Tuesday?" gets a normal grounded answer. Booking only happens through this endpoint,
+typically from a "Request a meeting" button next to the input. Candidate-side connection setup is
+in section 8 of [`Required_API_Doc.md`](./Required_API_Doc.md); never show Google tokens, the
+connected account email or scopes in any recruiter view.

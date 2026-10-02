@@ -193,6 +193,7 @@ class GoogleOAuthSettings(_Base):
     token_url: str = "https://oauth2.googleapis.com/token"
     revoke_url: str = "https://oauth2.googleapis.com/revoke"
     userinfo_url: str = "https://www.googleapis.com/oauth2/v2/userinfo"
+    calendar_events_url: str = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
 
 class FeatureFlags(_Base):

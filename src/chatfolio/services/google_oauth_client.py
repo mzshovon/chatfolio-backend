@@ -4,7 +4,11 @@ from urllib.parse import urlencode
 import httpx
 
 from chatfolio.config.settings import GoogleOAuthSettings
-from chatfolio.core.exceptions import ServiceUnavailableError, ValidationFailedError
+from chatfolio.core.exceptions import (
+    ServiceUnavailableError,
+    UnauthorizedError,
+    ValidationFailedError,
+)
 
 
 class GoogleOAuthClient:
@@ -87,3 +91,27 @@ class GoogleOAuthClient:
             # Best-effort: Google returns 200 even for an already-invalid token, and a revoke
             # failure shouldn't block deleting our own local copy of the connection.
             await client.post(self._settings.revoke_url, data={"token": token})
+
+    async def create_calendar_event(
+        self, *, access_token: str, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Inserts an event on the connected account's primary calendar. `conferenceDataVersion=1`
+        is what makes Google honour the `conferenceData.createRequest` (Meet link) in the body, and
+        `sendUpdates=all` makes Google email the invite to every attendee."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                self._settings.calendar_events_url,
+                params={"conferenceDataVersion": 1, "sendUpdates": "all"},
+                headers={"Authorization": f"Bearer {access_token}"},
+                json=event,
+            )
+        if response.status_code in (401, 403):
+            # Token revoked or the Calendar scope wasn't granted — only a reconnect fixes it.
+            raise UnauthorizedError(
+                "Google Calendar access was denied and must be reconnected."
+            )
+        if response.status_code >= 500:
+            raise ServiceUnavailableError("Google Calendar is temporarily unavailable.")
+        if response.status_code >= 400:
+            raise ValidationFailedError("Google rejected the meeting request.")
+        return response.json()

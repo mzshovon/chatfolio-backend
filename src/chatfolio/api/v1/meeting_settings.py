@@ -7,7 +7,12 @@ from chatfolio.core.exceptions import ChatfolioError
 from chatfolio.core.rate_limit import limiter
 from chatfolio.models.meeting import GoogleCalendarConnection
 from chatfolio.repositories.meeting_repository import MeetingRepository
-from chatfolio.schemas.meeting import GoogleConnectResponse, MeetingSettingsResponse
+from chatfolio.schemas.meeting import (
+    GoogleConnectResponse,
+    MeetingRequest,
+    MeetingResponse,
+    MeetingSettingsResponse,
+)
 from chatfolio.services.google_oauth_client import GoogleOAuthClient
 from chatfolio.services.meeting_service import MeetingSettingsService
 
@@ -97,3 +102,15 @@ async def disconnect_google(
     current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep
 ) -> None:
     await _service(session, settings).disconnect(current_user)
+
+
+@router.post("/meetings", response_model=MeetingResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
+async def schedule_meeting(
+    request: Request,
+    body: MeetingRequest,
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    settings: SettingsDep,
+) -> MeetingResponse:
+    return await _service(session, settings).schedule_meeting(current_user, body)
