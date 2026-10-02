@@ -142,6 +142,15 @@ class RAGService:
             context_parts.append(
                 "Contact phone: " + (phone or "not provided — do not invent or guess one") + "."
             )
+        if intent == RecruiterIntent.MEETING_REQUEST:
+            # The booking itself happens through the widget's meeting form, never in chat — so the
+            # model is told to point at it and not to confirm or invent a time, link or booking.
+            context_parts.append(
+                "The recruiter wants to meet or talk with the candidate. Tell them warmly that "
+                "they can request a Google Meet using the meeting option in this chat. Do not "
+                "propose, confirm or agree to any specific date/time, and do not claim a "
+                "meeting is booked or invent a meeting link."
+            )
         context_parts.extend(match["document"] for match in retrieved)
         context = "\n".join(context_parts) or "No profile information is available yet."
 

@@ -454,6 +454,7 @@ The backend builds the Google payload; the frontend only sends the fields below.
 // request
 {
   "attendee_email": "recruiter@example.com",   // required
+  "additional_attendees": "hr@example.com, cto@example.com",  // optional, comma-separated, max 10, invalid address → 422
   "start": "2026-09-19T17:00:00+06:00",        // required, must include a UTC offset ("Z" is fine) and be in the future
   "duration_minutes": 30,                       // optional, 5-480, default 30
   "timezone": "Asia/Dhaka",                     // optional IANA name, default "UTC" (display only)
@@ -472,7 +473,8 @@ The backend builds the Google payload; the frontend only sends the fields below.
   "start": "2026-09-19T17:00:00+06:00",
   "end": "2026-09-19T17:30:00+06:00",
   "timezone": "Asia/Dhaka",
-  "attendee_email": "recruiter@example.com"
+  "attendee_email": "recruiter@example.com",
+  "attendee_emails": ["recruiter@example.com", "hr@example.com", "cto@example.com"]
 }
 ```
 

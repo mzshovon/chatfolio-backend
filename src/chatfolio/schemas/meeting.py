@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, TypeAdapter, ValidationError, field_validator
 
 
 class GoogleConnectResponse(BaseModel):
@@ -21,11 +21,40 @@ class MeetingSettingsResponse(BaseModel):
     access_token: str | None = None
 
 
+MAX_ADDITIONAL_ATTENDEES = 10
+_email_adapter: TypeAdapter[str] = TypeAdapter(EmailStr)
+
+
+def parse_attendee_list(raw: str | None) -> str | None:
+    """Normalises a comma-separated email string: trims, lowercases, drops blanks and duplicates
+    (keeping first-seen order) and validates every address. Returns the cleaned comma-separated
+    string, or None when nothing is left — so the service can split it without re-validating."""
+    if raw is None:
+        return None
+    emails: list[str] = []
+    for part in raw.split(","):
+        candidate = part.strip()
+        if not candidate:
+            continue
+        try:
+            email = _email_adapter.validate_python(candidate).lower()
+        except ValidationError as exc:
+            raise ValueError(f"'{candidate}' is not a valid email address") from exc
+        if email not in emails:
+            emails.append(email)
+    if len(emails) > MAX_ADDITIONAL_ATTENDEES:
+        raise ValueError(f"at most {MAX_ADDITIONAL_ATTENDEES} additional attendees are allowed")
+    return ",".join(emails) or None
+
+
 class MeetingRequest(BaseModel):
     """Everything the frontend sends to schedule a Google Meet. Deliberately small: the backend
     builds the Google event payload (end time, requestId, conference config) itself."""
 
     attendee_email: EmailStr
+    # Comma-separated extra invitees, e.g. "a@x.com, b@y.com". Max 10; blanks and duplicates
+    # (including the main attendee, handled by the service) are dropped.
+    additional_attendees: str | None = Field(default=None, max_length=1000)
     # Must carry a UTC offset (e.g. "2026-09-19T17:00:00+06:00" or "...Z") — a naive datetime
     # would be silently interpreted in the server's timezone.
     start: datetime
@@ -38,6 +67,11 @@ class MeetingRequest(BaseModel):
     # a retry after a timeout) reuses Google's conference request instead of creating a second
     # Meet. Generated server-side when omitted.
     request_id: str | None = Field(default=None, min_length=8, max_length=100)
+
+    @field_validator("additional_attendees")
+    @classmethod
+    def _additional_attendees_valid(cls, value: str | None) -> str | None:
+        return parse_attendee_list(value)
 
     @field_validator("start")
     @classmethod
@@ -69,6 +103,8 @@ class MeetingResponse(BaseModel):
     end: datetime
     timezone: str
     attendee_email: str
+    # Every invitee Google was asked to email, main attendee first.
+    attendee_emails: list[str]
 
 
 class PublicMeetingRequest(BaseModel):
@@ -82,12 +118,17 @@ class PublicMeetingRequest(BaseModel):
     user_id: uuid.UUID | None = None
     attendee_email: EmailStr
     attendee_name: str | None = Field(default=None, max_length=100)
+    # Comma-separated extra invitees, e.g. "hr@company.com, cto@company.com". Max 10.
+    additional_attendees: str | None = Field(default=None, max_length=1000)
     start: datetime
     duration_minutes: int = Field(default=30, ge=15, le=120)
     timezone: str = "UTC"
     message: str | None = Field(default=None, max_length=500)
     request_id: str | None = Field(default=None, min_length=8, max_length=100)
 
+    _attendees = field_validator("additional_attendees")(
+        MeetingRequest._additional_attendees_valid.__func__
+    )
     _tz_aware = field_validator("start")(MeetingRequest._start_must_be_timezone_aware.__func__)
     _iana = field_validator("timezone")(MeetingRequest._timezone_must_be_iana.__func__)
 
@@ -100,3 +141,4 @@ class PublicMeetingResponse(BaseModel):
     start: datetime
     end: datetime
     timezone: str
+    attendee_emails: list[str]

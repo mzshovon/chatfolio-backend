@@ -184,7 +184,7 @@ show a generic "please try again in a moment" — don't retry automatically in a
 else happens, including on the fallback path. Use it to key widget behavior (e.g. show a "skills"
 card, a "contact" CTA) off the turn that was just answered. One of: `skill_inquiry`,
 `project_inquiry`, `experience_inquiry`, `education_inquiry`, `role_fit_inquiry`,
-`availability_inquiry`, `contact_request`, `general_introduction`, or `unknown` (off-topic
+`availability_inquiry`, `contact_request`, `meeting_request`, `general_introduction`, or `unknown` (off-topic
 messages, or a rare classifier failure — treat it as "no specific intent detected," not an error).
 
 **Error responses to handle explicitly:**
@@ -203,6 +203,14 @@ contact me directly for details."* There's no streaming — replies come back as
 response per call, so a simple "sending..." indicator (not a token-by-token typing effect) is
 the honest UX. A real LLM round-trip currently averages ~4s p50/p95 (measured under load,
 `scripts/load_test_chat.py`) — design the sending indicator for that timescale, not sub-second.
+
+**`meeting_request`** is returned when the recruiter wants a meeting, call, interview or
+discussion ("can we schedule a call?", "let's discuss the role", "ekta meeting korte chai"). The
+reply is a normal text answer that points them to the meeting option in the chat, and never
+confirms a time or invents a link. **Use this intent to open the "Request a meeting" form**
+(section 6) next to or under that reply — and if you previously got a `409`/`403` from the meetings
+endpoint, show the contact CTA instead. It does not share the candidate's email/phone (that is
+still `contact_request` only); a message asking for both is classified `meeting_request`.
 
 **`contact_request` and `availability_inquiry` accuracy:** every reply is grounded in the
 candidate's real `contact_email`/`phone`/`location`/`job_type` straight from their profile
@@ -319,6 +327,7 @@ invite to the recruiter's address.
   "user_id": "uuid",                            // optional — candidate's user id; if sent it must match the session's candidate, else 404
   "attendee_email": "recruiter@company.com",   // required — where the invite goes
   "attendee_name": "Sam Rivera",               // optional, shown in the event title
+  "additional_attendees": "hr@company.com, cto@company.com",  // optional — comma-separated extra invitees, max 10
   "start": "2026-09-19T17:00:00+06:00",        // required — must include a UTC offset ("Z" is fine), in the future
   "duration_minutes": 30,                       // optional, 15-120, default 30
   "timezone": "Asia/Dhaka",                     // optional IANA name, default "UTC"; use Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -332,11 +341,16 @@ invite to the recruiter's address.
   "title": "Interview via Chatfolio with Sam Rivera",
   "start": "2026-09-19T17:00:00+06:00",
   "end": "2026-09-19T17:30:00+06:00",
-  "timezone": "Asia/Dhaka"
+  "timezone": "Asia/Dhaka",
+  "attendee_emails": ["recruiter@company.com", "hr@company.com", "cto@company.com"]  // everyone Google emailed
 }
 ```
 
 **Notes for the UI:**
+- `additional_attendees` is a plain comma-separated string (a single text input is fine). Spaces
+  are trimmed, case is ignored, and blanks/duplicates (including `attendee_email` itself) are
+  dropped. Any invalid address → `422` for the whole request; more than 10 → `422`. Everyone
+  listed gets the Google invite, and `attendee_emails` in the response is the final list.
 - Build `start` from a date/time picker plus the browser's timezone offset
   (e.g. `new Date(...).toISOString()` gives a valid `Z` value). Naive strings like
   `2026-09-19T17:00:00` are rejected with `422`.

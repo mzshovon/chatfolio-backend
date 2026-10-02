@@ -347,3 +347,38 @@ async def test_send_message_after_unpublish_returns_404(
         f"/api/v1/public/chat/sessions/{session_id}/messages", json={"content": "still there?"}
     )
     assert response.status_code == 404
+
+
+async def test_meeting_request_intent_is_returned_and_persisted(
+    set_fake_llm: Callable[[str], None],
+) -> None:
+    _, _headers, slug = await publish_full_profile(
+        "chat-meeting-owner@example.com", set_fake_llm, "chat-meeting"
+    )
+    client, raw_session_id = await _start_session(slug, "chat-meeting-recruiter@example.com")
+    session_id = uuid.UUID(raw_session_id)
+
+    factory = TrackingLLMFactory(
+        {
+            LLMTask.INTENT: _intent_response("meeting_request"),
+            LLMTask.CHAT: "Happy to talk — you can request a Google Meet from this chat.",
+        }
+    )
+    _set_llm_factory(factory)
+    _set_vector_store(FakeVectorStore(query_results=[]))
+    try:
+        response = await client.post(
+            f"/api/v1/public/chat/sessions/{session_id}/messages",
+            json={"content": "Can we schedule a call to discuss the role?"},
+        )
+    finally:
+        _clear_llm_factory()
+        _clear_vector_store()
+
+    assert response.status_code == 200
+    assert response.json()["intent"] == "meeting_request"
+    assert LLMTask.CHAT in factory.calls  # not an informational intent: no canned fallback
+
+    messages = await _fetch_messages(session_id)
+    assert messages[0].intent == "meeting_request"
+    assert messages[1].intent == "meeting_request"

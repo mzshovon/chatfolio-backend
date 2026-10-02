@@ -94,6 +94,7 @@ async def request_meeting(
         session_id,
         MeetingRequest(
             attendee_email=payload.attendee_email,
+            additional_attendees=payload.additional_attendees,
             start=payload.start,
             duration_minutes=payload.duration_minutes,
             timezone=payload.timezone,
@@ -109,4 +110,5 @@ async def request_meeting(
         start=meeting.start,
         end=meeting.end,
         timezone=meeting.timezone,
+        attendee_emails=meeting.attendee_emails,
     )

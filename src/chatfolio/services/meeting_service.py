@@ -208,12 +208,18 @@ class MeetingSettingsService:
 
         access_token = await self._valid_access_token_for(user_id)
         end = request.start + timedelta(minutes=request.duration_minutes)
+        # Main attendee first; additional_attendees is already validated/deduplicated by the
+        # schema, so only the overlap with the main attendee is left to drop here.
+        attendee_emails = [request.attendee_email]
+        for extra in (request.additional_attendees or "").split(","):
+            if extra and extra.lower() not in {e.lower() for e in attendee_emails}:
+                attendee_emails.append(extra)
         event: dict[str, Any] = {
             "summary": request.title,
             "description": request.description,
             "start": {"dateTime": request.start.isoformat(), "timeZone": request.timezone},
             "end": {"dateTime": end.isoformat(), "timeZone": request.timezone},
-            "attendees": [{"email": request.attendee_email}],
+            "attendees": [{"email": email} for email in attendee_emails],
             "conferenceData": {
                 "createRequest": {
                     "requestId": request.request_id or f"chatfolio-{uuid.uuid4()}",
@@ -242,4 +248,5 @@ class MeetingSettingsService:
             end=end,
             timezone=request.timezone,
             attendee_email=request.attendee_email,
+            attendee_emails=attendee_emails,
         )

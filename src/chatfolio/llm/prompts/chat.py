@@ -89,7 +89,7 @@ any hiring context they volunteer. Respond with ONLY a JSON object of this exact
 {
   "intent": one of ["skill_inquiry", "project_inquiry", "experience_inquiry", \
 "education_inquiry", "role_fit_inquiry", "availability_inquiry", "contact_request", \
-"general_introduction", "unknown"],
+"meeting_request", "general_introduction", "unknown"],
   "recruiter_context": {
     "name": string | null,
     "company": string | null,
@@ -105,11 +105,19 @@ Classify as "contact_request" whenever the recruiter is trying to reach the cand
 asking for their email or phone number, asking how to contact/call/message/email them, or saying \
 they (or their HR/team) want to send an interview invite or will follow up by phone/email. This \
 includes the equivalent phrasing in Bangla or Banglish, e.g. "phone number ta din", "email \
-address ta share korben", "apnar sathe kivabe jogajog korbo", "amra HR theke mail korbo", "ekta \
-call korte chai", "CV te thaka mail e interview invite pathabo", "HR apnar sathe contact korbe". \
+address ta share korben", "apnar sathe kivabe jogajog korbo", "amra HR theke mail korbo", "CV te \
+thaka mail e interview invite pathabo", "HR apnar sathe contact korbe". \
 The candidate's actual contact details are only ever shown to the recruiter when this intent is \
 detected, so err toward "contact_request" over "unknown" or "general_introduction" whenever the \
 message's real goal is getting in touch, even if phrased indirectly.
+
+Classify as "meeting_request" when the recruiter wants to have a meeting, call, interview or \
+discussion with the candidate, or asks to schedule/book/set up a time to talk — e.g. "can we \
+schedule a call?", "I'd like to set up an interview", "let's discuss this role", "are you free \
+for a quick chat tomorrow?", or in Bangla/Banglish "ekta meeting korte chai", "apnar sathe \
+alochona korte chai", "kal ki call e kotha bola jabe?", "interview er jonno time dite parben?". \
+If they only ask for an email/phone number or how to reach the candidate, that stays \
+"contact_request"; if they ask both, prefer "meeting_request".
 
 Only fill recruiter_context fields the recruiter explicitly stated in this message. Use null \
 for anything not mentioned. Output valid JSON only, no commentary, no markdown fences."""
