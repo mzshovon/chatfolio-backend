@@ -25,6 +25,8 @@ services:
       VECTORSTORE_HOST: chroma
       VECTORSTORE_PORT: 8000
       STORAGE_ENDPOINT_URL: http://minio:9000
+      # SMS gateway runs on the host, not in this compose network; localhost would be the container.
+      SMS_API_URL: http://host.docker.internal:8007/sms/send
     ports:
       - "8000:8000"
     depends_on:

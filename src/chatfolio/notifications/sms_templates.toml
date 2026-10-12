@@ -1,0 +1,12 @@
+# SMS message templates — edit the text here, restart the service, no Python change needed.
+# Placeholders use str.format() syntax; keep the ones each template lists intact:
+#   WELCOME            {name}
+#   RECRUITER_ALERT    {name}, {recruiter_name}, {company}
+#   MEETING_ALERT      {name}, {recruiter_name}, {meeting_date}, {meeting_time}
+#   OTP_VERIFICATION   {otp}, {otp_ttl_minutes}
+
+[templates]
+WELCOME = "Welcome to Chatfolio, {name}! Your account is ready. Build your AI-powered portfolio and let recruiters chat with it."
+RECRUITER_ALERT = "Hi {name}, {recruiter_name} from {company} just started a chat with your Chatfolio."
+MEETING_ALERT = "Hi {name}, {recruiter_name} booked a meeting with you on {meeting_date} at {meeting_time}. Check your email for the Google Meet invite."
+OTP_VERIFICATION = "Your Chatfolio verification code is {otp}. It expires in {otp_ttl_minutes} minutes."

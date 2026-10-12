@@ -26,9 +26,10 @@ from chatfolio.models.user import (
     User,
     UserRole,
 )
-from chatfolio.notifications.base import EmailSender, SmsSender
+from chatfolio.notifications.base import EmailSender
 from chatfolio.repositories.user_repository import UserRepository
 from chatfolio.schemas.auth import TokenResponse, TwoFactorChallengeResponse, TwoFactorSetupResponse
+from chatfolio.services.sms_service import SmsService, SmsTemplate, normalize_bd_mobile
 
 
 def _mask_email(email: str) -> str:
@@ -54,13 +55,38 @@ class AuthService:
         self._repository = repository
         self._settings = security_settings
 
-    async def register(self, email: str, password: str) -> User:
+    async def register(
+        self,
+        email: str,
+        password: str,
+        *,
+        phone: str | None,
+        full_name: str | None,
+        sms_service: SmsService,
+        background_tasks: BackgroundTasks,
+    ) -> User:
         existing = await self._repository.get_by_email(email)
         if existing is not None:
             raise ConflictError("An account with this email already exists.")
 
-        user = User(email=email, hashed_password=hash_password(password), role=UserRole.CANDIDATE)
-        return await self._repository.create(user)
+        mobile = normalize_bd_mobile(phone)
+        user = User(
+            email=email,
+            hashed_password=hash_password(password),
+            role=UserRole.CANDIDATE,
+            phone=mobile,
+        )
+        user = await self._repository.create(user)
+
+        # Only a valid Bangladeshi number gets the welcome SMS (queue() re-checks and skips).
+        if mobile:
+            sms_service.queue(
+                background_tasks,
+                SmsTemplate.WELCOME,
+                mobile,
+                name=(full_name or "").strip() or email.partition("@")[0],
+            )
+        return user
 
     async def login(
         self,
@@ -68,7 +94,7 @@ class AuthService:
         password: str,
         *,
         email_sender: EmailSender,
-        sms_sender: SmsSender,
+        sms_service: SmsService,
         background_tasks: BackgroundTasks,
     ) -> TokenResponse | TwoFactorChallengeResponse:
         user = await self._repository.get_by_email(email)
@@ -84,7 +110,7 @@ class AuthService:
                 OtpPurpose.TWO_FACTOR_LOGIN,
                 method,
                 email_sender,
-                sms_sender,
+                sms_service,
                 background_tasks,
             )
             challenge_token = create_two_factor_challenge_token(
@@ -260,7 +286,7 @@ class AuthService:
         phone: str | None,
         *,
         email_sender: EmailSender,
-        sms_sender: SmsSender,
+        sms_service: SmsService,
         background_tasks: BackgroundTasks,
     ) -> TwoFactorSetupResponse:
         needs_phone = method in (TwoFactorMethod.PHONE, TwoFactorMethod.BOTH)
@@ -270,7 +296,7 @@ class AuthService:
             raise ValidationFailedError("A phone number is required for this two-factor method.")
 
         await self._issue_otp(
-            user, OtpPurpose.TWO_FACTOR_ENROLL, method, email_sender, sms_sender, background_tasks
+            user, OtpPurpose.TWO_FACTOR_ENROLL, method, email_sender, sms_service, background_tasks
         )
         return TwoFactorSetupResponse(
             method=method, masked_destinations=_destinations_for(method, user)
@@ -297,7 +323,7 @@ class AuthService:
         challenge_token: str,
         *,
         email_sender: EmailSender,
-        sms_sender: SmsSender,
+        sms_service: SmsService,
         background_tasks: BackgroundTasks,
     ) -> None:
         user_id = self._decode_challenge(challenge_token)
@@ -316,7 +342,7 @@ class AuthService:
             OtpPurpose.TWO_FACTOR_LOGIN,
             user.two_factor_method,
             email_sender,
-            sms_sender,
+            sms_service,
             background_tasks,
         )
 
@@ -336,7 +362,7 @@ class AuthService:
         purpose: OtpPurpose,
         method: TwoFactorMethod,
         email_sender: EmailSender,
-        sms_sender: SmsSender,
+        sms_service: SmsService,
         background_tasks: BackgroundTasks,
     ) -> None:
         code = generate_otp_code()
@@ -353,6 +379,7 @@ class AuthService:
             f"Your Chatfolio verification code is {code}. "
             f"It expires in {self._settings.otp_ttl_minutes} minutes."
         )
+        # Email body above must keep "code is NNNNNN" (tests parse it); SMS uses the template.
         if method in (TwoFactorMethod.EMAIL, TwoFactorMethod.BOTH):
             background_tasks.add_task(
                 email_sender.send,
@@ -361,7 +388,13 @@ class AuthService:
                 body=message,
             )
         if method in (TwoFactorMethod.PHONE, TwoFactorMethod.BOTH) and user.phone:
-            background_tasks.add_task(sms_sender.send, to=user.phone, message=message)
+            sms_service.queue(
+                background_tasks,
+                SmsTemplate.OTP_VERIFICATION,
+                user.phone,
+                otp=code,
+                otp_ttl_minutes=self._settings.otp_ttl_minutes,
+            )
 
     async def _consume_otp(self, user_id: uuid.UUID, purpose: OtpPurpose, code: str) -> OtpCode:
         otp = await self._repository.get_latest_active_otp(user_id, purpose)

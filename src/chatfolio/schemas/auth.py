@@ -9,6 +9,10 @@ from chatfolio.models.user import TwoFactorMethod, UserRole
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    # Both optional. A valid Bangladeshi mobile number (e.g. 01939504445) is saved on the account
+    # and triggers the welcome SMS; anything else is ignored, never a registration error.
+    phone: str | None = Field(default=None, max_length=32)
+    full_name: str | None = Field(default=None, max_length=100)
 
 
 class LoginRequest(BaseModel):

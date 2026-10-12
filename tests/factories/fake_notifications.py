@@ -10,5 +10,5 @@ class FakeSmsSender:
     def __init__(self) -> None:
         self.sent: list[dict[str, str]] = []
 
-    async def send(self, *, to: str, message: str) -> None:
-        self.sent.append({"to": to, "message": message})
+    async def send(self, *, to: str, message: str, campaign_name: str | None = None) -> None:
+        self.sent.append({"to": to, "message": message, "campaign_name": campaign_name})

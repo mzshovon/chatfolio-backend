@@ -18,6 +18,7 @@ from chatfolio.notifications.base import EmailSender, SmsSender
 from chatfolio.notifications.sms_vendor import VendorSmsSender
 from chatfolio.notifications.smtp_email import SmtpEmailSender
 from chatfolio.repositories.user_repository import UserRepository
+from chatfolio.services.sms_service import SmsService
 from chatfolio.storage.base import StorageBackend
 from chatfolio.storage.s3_storage import S3StorageBackend
 from chatfolio.vectorstore.base import VectorStore
@@ -50,6 +51,13 @@ def get_sms_sender(settings: SettingsDep) -> SmsSender:
 
 
 SmsSenderDep = Annotated[SmsSender, Depends(get_sms_sender)]
+
+
+def get_sms_service(sms_sender: SmsSenderDep) -> SmsService:
+    return SmsService(sms_sender)
+
+
+SmsServiceDep = Annotated[SmsService, Depends(get_sms_service)]
 
 
 def get_storage_backend(settings: SettingsDep) -> StorageBackend:

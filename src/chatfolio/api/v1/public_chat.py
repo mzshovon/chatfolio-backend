@@ -1,12 +1,13 @@
 import uuid
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, BackgroundTasks, Request, status
 
 from chatfolio.api.deps import (
     DbSessionDep,
     EmbedTextsDep,
     LLMFactoryDep,
     SettingsDep,
+    SmsServiceDep,
     VectorStoreDep,
 )
 from chatfolio.config.settings import get_settings
@@ -59,9 +60,14 @@ async def send_chat_message(
     vector_store: VectorStoreDep,
     embed_texts: EmbedTextsDep,
     llm_factory: LLMFactoryDep,
+    sms_service: SmsServiceDep,
+    background_tasks: BackgroundTasks,
 ) -> ChatMessageResponse:
     reply = await _service(session, vector_store, embed_texts, llm_factory).send_message(
-        session_id, payload.content
+        session_id,
+        payload.content,
+        sms_service=sms_service,
+        background_tasks=background_tasks,
     )
     return ChatMessageResponse.model_validate(reply)
 
@@ -79,6 +85,8 @@ async def request_meeting(
     payload: PublicMeetingRequest,
     session: DbSessionDep,
     settings: SettingsDep,
+    sms_service: SmsServiceDep,
+    background_tasks: BackgroundTasks,
 ) -> PublicMeetingResponse:
     service = MeetingSettingsService(
         session,
@@ -103,6 +111,9 @@ async def request_meeting(
             request_id=payload.request_id,
         ),
         expected_user_id=payload.user_id,
+        recruiter_name=payload.attendee_name,
+        sms_service=sms_service,
+        background_tasks=background_tasks,
     )
     return PublicMeetingResponse(
         meet_link=meeting.meet_link,

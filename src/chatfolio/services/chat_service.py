@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from fastapi import BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +11,9 @@ from chatfolio.models.chat import ChatMessage, ChatSession, MessageRole, Recruit
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
 from chatfolio.models.profile import CandidateProfile
+from chatfolio.models.user import User
 from chatfolio.services.rag_service import RAGService
+from chatfolio.services.sms_service import SmsService, SmsTemplate, resolve_candidate_mobile
 
 COOLDOWN_SECONDS = 2.0
 RAPID_FIRE_FLAG_THRESHOLD = 5
@@ -42,8 +45,16 @@ class ChatService:
         await self._session.flush()
         return chat_session
 
-    async def send_message(self, session_id: uuid.UUID, content: str) -> ChatMessage:
+    async def send_message(
+        self,
+        session_id: uuid.UUID,
+        content: str,
+        *,
+        sms_service: SmsService | None = None,
+        background_tasks: BackgroundTasks | None = None,
+    ) -> ChatMessage:
         chat_session = await self._get_session(session_id)
+        is_first_message = chat_session.last_active_at is None
         chatfolio = await self._session.get(PublicChatfolio, chat_session.chatfolio_id)
         if chatfolio is None or not chatfolio.is_published:
             raise NotFoundError("This Chatfolio is not available.")
@@ -65,6 +76,11 @@ class ChatService:
         intent, extracted_context, intent_tokens = await self._rag.classify_and_extract(content)
         recruiter_message.intent = intent.value
         await self._merge_recruiter_metadata(chat_session.id, extracted_context)
+
+        if is_first_message and sms_service is not None and background_tasks is not None:
+            await self._alert_candidate(
+                profile, extracted_context, sms_service, background_tasks
+            )
 
         sections = await self._approved_sections(profile.id)
         retrieved = await self._rag.retrieve(profile.id, content)
@@ -95,6 +111,26 @@ class ChatService:
         chat_session.last_active_at = datetime.now(UTC)
         await self._session.flush()
         return assistant_message
+
+    async def _alert_candidate(
+        self,
+        profile: CandidateProfile,
+        extracted: dict[str, str],
+        sms_service: SmsService,
+        background_tasks: BackgroundTasks,
+    ) -> None:
+        """RECRUITER_ALERT: once per chat session, on the recruiter's first message. Name/company
+        are whatever the LLM extracted from that message, with neutral fallbacks."""
+        candidate = await self._session.get(User, profile.user_id)
+        sms_service.queue(
+            background_tasks,
+            SmsTemplate.RECRUITER_ALERT,
+            # Profile phone (what the portfolio shows, from the CV) first, account phone second.
+            resolve_candidate_mobile(profile.phone, candidate.phone if candidate else None),
+            name=profile.full_name or "there",
+            recruiter_name=extracted.get("name") or "A recruiter",
+            company=extracted.get("company") or "their company",
+        )
 
     async def _get_session(self, session_id: uuid.UUID) -> ChatSession:
         chat_session = await self._session.get(ChatSession, session_id)

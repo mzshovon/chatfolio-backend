@@ -4,7 +4,7 @@ from chatfolio.api.deps import (
     CurrentUserDep,
     EmailSenderDep,
     SettingsDep,
-    SmsSenderDep,
+    SmsServiceDep,
     UserRepositoryDep,
 )
 from chatfolio.core.rate_limit import limiter
@@ -42,8 +42,17 @@ async def register(
     payload: RegisterRequest,
     repository: UserRepositoryDep,
     settings: SettingsDep,
+    sms_service: SmsServiceDep,
+    background_tasks: BackgroundTasks,
 ) -> UserResponse:
-    user = await _service(repository, settings).register(payload.email, payload.password)
+    user = await _service(repository, settings).register(
+        payload.email,
+        payload.password,
+        phone=payload.phone,
+        full_name=payload.full_name,
+        sms_service=sms_service,
+        background_tasks=background_tasks,
+    )
     return UserResponse.model_validate(user)
 
 
@@ -55,14 +64,14 @@ async def login(
     repository: UserRepositoryDep,
     settings: SettingsDep,
     email_sender: EmailSenderDep,
-    sms_sender: SmsSenderDep,
+    sms_service: SmsServiceDep,
     background_tasks: BackgroundTasks,
 ) -> TokenResponse | TwoFactorChallengeResponse:
     return await _service(repository, settings).login(
         payload.email,
         payload.password,
         email_sender=email_sender,
-        sms_sender=sms_sender,
+        sms_service=sms_service,
         background_tasks=background_tasks,
     )
 
@@ -177,7 +186,7 @@ async def setup_two_factor(
     repository: UserRepositoryDep,
     settings: SettingsDep,
     email_sender: EmailSenderDep,
-    sms_sender: SmsSenderDep,
+    sms_service: SmsServiceDep,
     background_tasks: BackgroundTasks,
 ) -> TwoFactorSetupResponse:
     return await _service(repository, settings).setup_two_factor(
@@ -185,7 +194,7 @@ async def setup_two_factor(
         payload.method,
         payload.phone,
         email_sender=email_sender,
-        sms_sender=sms_sender,
+        sms_service=sms_service,
         background_tasks=background_tasks,
     )
 
@@ -223,12 +232,12 @@ async def resend_two_factor_login_code(
     repository: UserRepositoryDep,
     settings: SettingsDep,
     email_sender: EmailSenderDep,
-    sms_sender: SmsSenderDep,
+    sms_service: SmsServiceDep,
     background_tasks: BackgroundTasks,
 ) -> None:
     await _service(repository, settings).resend_two_factor_login_code(
         payload.challenge_token,
         email_sender=email_sender,
-        sms_sender=sms_sender,
+        sms_service=sms_service,
         background_tasks=background_tasks,
     )

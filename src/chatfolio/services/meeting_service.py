@@ -1,8 +1,10 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import jwt as pyjwt
+from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.config.settings import SecuritySettings
@@ -28,6 +30,7 @@ from chatfolio.models.user import User
 from chatfolio.repositories.meeting_repository import MeetingRepository
 from chatfolio.schemas.meeting import MeetingRequest, MeetingResponse
 from chatfolio.services.google_oauth_client import GoogleOAuthClient
+from chatfolio.services.sms_service import SmsService, SmsTemplate, resolve_candidate_mobile
 
 
 class MeetingSettingsService:
@@ -159,6 +162,10 @@ class MeetingSettingsService:
         session_id: uuid.UUID,
         request: MeetingRequest,
         expected_user_id: uuid.UUID | None = None,
+        *,
+        recruiter_name: str | None = None,
+        sms_service: SmsService | None = None,
+        background_tasks: BackgroundTasks | None = None,
     ) -> MeetingResponse:
         """Recruiter-initiated variant, called from the public chat: the candidate is resolved
         from the chat session (never from client input), and every connection problem collapses
@@ -198,6 +205,20 @@ class MeetingSettingsService:
         # Only recorded once Google accepted the event: a failed attempt must not burn the
         # session's one request or start the candidate's cool-down.
         await self._repository.record_request(session_id, profile.user_id)
+
+        if sms_service is not None and background_tasks is not None:
+            candidate = await self._session.get(User, profile.user_id)
+            if candidate is not None:
+                local_start = meeting.start.astimezone(ZoneInfo(meeting.timezone))
+                sms_service.queue(
+                    background_tasks,
+                    SmsTemplate.MEETING_ALERT,
+                    resolve_candidate_mobile(profile.phone, candidate.phone),
+                    name=profile.full_name or "there",
+                    recruiter_name=recruiter_name or "A recruiter",
+                    meeting_date=local_start.strftime("%d %b %Y"),
+                    meeting_time=f"{local_start.strftime('%I:%M %p')} ({meeting.timezone})",
+                )
         return meeting
 
     async def _schedule_meeting_for(

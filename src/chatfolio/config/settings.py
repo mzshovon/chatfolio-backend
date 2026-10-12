@@ -121,12 +121,10 @@ class EmailSettings(_Base):
 class SmsSettings(_Base):
     model_config = SettingsConfigDict(env_prefix="SMS_", env_file=".env", extra="ignore")
 
-    # api_url left unset by default, same log-and-skip behavior as EmailSettings above. Adapter
-    # POSTs {"to": ..., "message": ..., "sender_id": ...} as JSON with a bearer api_key — adjust
-    # notifications/sms_vendor.py if your vendor's contract differs.
+    # Any of these left unset = VendorSmsSender logs and skips instead of sending, same as email.
     api_url: str | None = None
-    api_key: SecretStr | None = None
-    sender_id: str | None = None
+    client_id: str | None = None
+    client_password: SecretStr | None = None
 
 
 class VectorStoreSettings(_Base):
