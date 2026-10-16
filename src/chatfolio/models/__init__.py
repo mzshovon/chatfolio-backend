@@ -2,6 +2,7 @@
 
 from chatfolio.models import (  # noqa: F401
     audit_log,
+    billing,
     chat,
     chatfolio,
     cv,

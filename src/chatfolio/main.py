@@ -10,15 +10,19 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from chatfolio.api.v1.admin import router as admin_router
+from chatfolio.api.v1.admin_plans import router as admin_plans_router
 from chatfolio.api.v1.admin_rbac import router as admin_rbac_router
+from chatfolio.api.v1.admin_subscriptions import router as admin_subscriptions_router
 from chatfolio.api.v1.auth import router as auth_router
 from chatfolio.api.v1.custom_domain import router as custom_domain_router
 from chatfolio.api.v1.cv import router as cv_router
 from chatfolio.api.v1.dashboard import router as dashboard_router
 from chatfolio.api.v1.feedback import router as feedback_router
 from chatfolio.api.v1.health import router as health_router
+from chatfolio.api.v1.me import router as me_router
 from chatfolio.api.v1.meeting_settings import router as meeting_settings_router
 from chatfolio.api.v1.portfolio_settings import router as portfolio_settings_router
+from chatfolio.api.v1.pricing import router as pricing_router
 from chatfolio.api.v1.profiles import router as profiles_router
 from chatfolio.api.v1.public_chat import router as public_chat_router
 from chatfolio.api.v1.public_portfolio import router as public_portfolio_router
@@ -106,8 +110,12 @@ def create_app() -> FastAPI:
     app.include_router(feedback_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
     app.include_router(meeting_settings_router, prefix="/api/v1")
+    app.include_router(pricing_router, prefix="/api/v1")
+    app.include_router(me_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(admin_rbac_router, prefix="/api/v1")
+    app.include_router(admin_plans_router, prefix="/api/v1")
+    app.include_router(admin_subscriptions_router, prefix="/api/v1")
 
     return app
 

@@ -24,8 +24,11 @@ from chatfolio.api.deps import (  # noqa: E402
     get_vector_store,
 )
 from chatfolio.config.settings import get_settings  # noqa: E402
+from chatfolio.core.redis import get_redis  # noqa: E402
 from chatfolio.db.base import Base  # noqa: E402
-from chatfolio.db.session import get_engine  # noqa: E402
+from chatfolio.db.session import get_engine, get_sessionmaker  # noqa: E402
+from chatfolio.entitlements.cache import EntitlementCache  # noqa: E402
+from chatfolio.entitlements.catalog import ensure_catalog  # noqa: E402
 from chatfolio.main import app  # noqa: E402
 from chatfolio.workers.queue import get_arq_pool  # noqa: E402
 from tests.factories.fake_notifications import FakeEmailSender, FakeSmsSender  # noqa: E402
@@ -75,7 +78,15 @@ async def _prepare_test_database() -> AsyncGenerator[None]:
 
 @pytest.fixture(autouse=True)
 async def _clean_database() -> AsyncGenerator[None]:
+    # The cleanup below truncates every table, including the plan catalogue — re-seed it so each
+    # test starts with the default features + free/premium plans, and drop cached entitlements
+    # (Redis outlives the truncation) so no test reads a snapshot built from a previous test's DB.
+    await EntitlementCache(get_redis()).flush_all()
+    async with get_sessionmaker()() as seed_session:
+        await ensure_catalog(seed_session)
+        await seed_session.commit()
     yield
+    await EntitlementCache(get_redis()).flush_all()
     settings = get_settings()
     assert "test" in settings.database.name  # same safety net as above, cheap to repeat
 

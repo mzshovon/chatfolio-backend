@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatfolio.config.settings import Settings, get_settings
 from chatfolio.core.exceptions import ForbiddenError, UnauthorizedError
+from chatfolio.core.redis import get_redis
 from chatfolio.core.security import decode_access_token
 from chatfolio.db.session import get_db_session
+from chatfolio.entitlements.cache import EntitlementCache
 from chatfolio.llm.base import LLMFactory
 from chatfolio.llm.factory import LLMProviderFactory
 from chatfolio.models.user import User, UserRole
@@ -18,6 +20,8 @@ from chatfolio.notifications.base import EmailSender, SmsSender
 from chatfolio.notifications.sms_vendor import VendorSmsSender
 from chatfolio.notifications.smtp_email import SmtpEmailSender
 from chatfolio.repositories.user_repository import UserRepository
+from chatfolio.services.entitlement_service import EntitlementService
+from chatfolio.services.pricing_service import PricingService
 from chatfolio.services.sms_service import SmsService
 from chatfolio.storage.base import StorageBackend
 from chatfolio.storage.s3_storage import S3StorageBackend
@@ -30,6 +34,29 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+def get_entitlement_cache() -> EntitlementCache:
+    return EntitlementCache(get_redis())
+
+
+EntitlementCacheDep = Annotated[EntitlementCache, Depends(get_entitlement_cache)]
+
+
+def get_entitlement_service(
+    session: DbSessionDep, cache: EntitlementCacheDep
+) -> EntitlementService:
+    return EntitlementService(session, cache)
+
+
+EntitlementServiceDep = Annotated[EntitlementService, Depends(get_entitlement_service)]
+
+
+def get_pricing_service(session: DbSessionDep, cache: EntitlementCacheDep) -> PricingService:
+    return PricingService(session, cache)
+
+
+PricingServiceDep = Annotated[PricingService, Depends(get_pricing_service)]
 
 
 def get_user_repository(session: DbSessionDep) -> UserRepository:
