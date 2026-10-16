@@ -61,7 +61,7 @@ class GenerationService:
     ) -> PortfolioSection:
         profile = await self._profile_service.get_or_create_for_user(user)
         context = await self._build_context(user)
-        completion = await self._complete(section_type, context)
+        completion = await self._complete(section_type, context, user.id)
         content = completion.content.strip()
         profile.ai_tokens_used += completion.tokens_used
 
@@ -87,9 +87,11 @@ class GenerationService:
         )
         return await self._profile_service.add_child(user, section)
 
-    async def _complete(self, section_type: SectionType, context: str) -> LLMCompletion:
+    async def _complete(
+        self, section_type: SectionType, context: str, owner_id: uuid.UUID
+    ) -> LLMCompletion:
         try:
-            provider = self._llm_factory.for_task(LLMTask.GENERATION)
+            provider = self._llm_factory.for_task(LLMTask.GENERATION, owner_id=owner_id)
             return await provider.complete(
                 system=SECTION_GENERATION_SYSTEM_PROMPTS[section_type],
                 messages=[{"role": "user", "content": context}],

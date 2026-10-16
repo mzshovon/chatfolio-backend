@@ -245,3 +245,20 @@ class PlanModel(Base):
     model_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("llm_models.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class UserModelPreference(Base):
+    """The model a user chose (only honoured while their plan allows model selection and the model
+    is active and in the plan's allowed set — checked on every request, never trusted from here)."""
+
+    __tablename__ = "user_model_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("llm_models.id", ondelete="SET NULL"), default=None
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

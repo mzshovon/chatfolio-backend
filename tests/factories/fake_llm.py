@@ -23,6 +23,6 @@ class FakeLLMFactory:
         self._response = response
         self._tokens_used = tokens_used
 
-    def for_task(self, task: LLMTask) -> LLMProvider:
+    def for_task(self, task: LLMTask, *, owner_id: object = None) -> LLMProvider:
         text = self._response[task] if isinstance(self._response, dict) else self._response
         return FakeLLMProvider(text, self._tokens_used)

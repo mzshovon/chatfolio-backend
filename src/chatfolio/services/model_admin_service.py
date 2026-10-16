@@ -131,12 +131,7 @@ class ModelAdminService:
         return response
 
     def _provider_configured(self, provider: LLMProviderName) -> bool:
-        key = {
-            LLMProviderName.DEEPSEEK: self._llm_settings.deepseek_api_key,
-            LLMProviderName.OPENAI: self._llm_settings.openai_api_key,
-            LLMProviderName.GEMINI: self._llm_settings.gemini_api_key,
-        }.get(provider)
-        return key is not None and bool(key.get_secret_value())
+        return self._llm_settings.api_key_for(provider) is not None
 
 
 def _plain(value: Any) -> Any:

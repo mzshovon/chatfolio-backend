@@ -105,6 +105,7 @@ class RAGService:
         history: list[Message],
         user_message: str,
         intent: RecruiterIntent,
+        owner_id: uuid.UUID | None = None,
     ) -> tuple[str, int]:
         if intent in INFORMATIONAL_INTENTS and not retrieved:
             return random.choice(CHAT_FALLBACK_RESPONSES), 0
@@ -153,7 +154,7 @@ class RAGService:
         )
 
         try:
-            provider = self._llm_factory.for_task(LLMTask.CHAT)
+            provider = self._llm_factory.for_task(LLMTask.CHAT, owner_id=owner_id)
             completion = await provider.complete(
                 system=system, messages=[*history, {"role": "user", "content": user_message}]
             )

@@ -1,42 +1,8 @@
-import httpx
-
-from chatfolio.llm.base import LLMCompletion, Message
+from chatfolio.llm.providers.openai_compatible import OpenAICompatibleProvider
 
 
-class DeepSeekProvider:
+class DeepSeekProvider(OpenAICompatibleProvider):
     """OpenAI-compatible chat completions API. https://api-docs.deepseek.com"""
 
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        model: str = "deepseek-chat",
-        base_url: str = "https://api.deepseek.com",
-        timeout: float = 60.0,
-    ) -> None:
-        self._api_key = api_key
-        self._model = model
-        self._base_url = base_url
-        self._timeout = timeout
-
-    async def complete(
-        self, *, system: str, messages: list[Message], json_mode: bool = False
-    ) -> LLMCompletion:
-        payload: dict[str, object] = {
-            "model": self._model,
-            "messages": [{"role": "system", "content": system}, *messages],
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
-        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
-            response = await client.post(
-                "/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-            )
-            response.raise_for_status()
-            data = response.json()
-            content: str = data["choices"][0]["message"]["content"]
-            tokens_used: int = data.get("usage", {}).get("total_tokens", 0)
-            return LLMCompletion(content=content, tokens_used=tokens_used)
+    def __init__(self, *, api_key: str, model: str, base_url: str, timeout: float = 60.0) -> None:
+        super().__init__(api_key=api_key, model=model, base_url=base_url, timeout=timeout)

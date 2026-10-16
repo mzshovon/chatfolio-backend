@@ -65,12 +65,19 @@ class EntitlementCache:
         except Exception:
             logger.warning("entitlements.cache_invalidate_failed", exc_info=True)
 
+    async def get_catalog(self, name: str) -> Any | None:
+        """A shared, version-keyed catalogue payload (pricing cards, model catalogue, ...)."""
+        return await self._get_json(f"plans:{name}:v{await self.catalog_version()}")
+
+    async def set_catalog(self, name: str, payload: Any) -> None:
+        key = f"plans:{name}:v{await self.catalog_version()}"
+        await self._set_json(key, payload, CATALOG_TTL_SECONDS)
+
     async def get_pricing(self) -> Any | None:
-        return await self._get_json(f"plans:public:v{await self.catalog_version()}")
+        return await self.get_catalog("public")
 
     async def set_pricing(self, payload: Any) -> None:
-        key = f"plans:public:v{await self.catalog_version()}"
-        await self._set_json(key, payload, CATALOG_TTL_SECONDS)
+        await self.set_catalog("public", payload)
 
     async def flush_all(self) -> None:
         """Test helper: drop every key this cache owns (never touches rate-limit/queue keys)."""

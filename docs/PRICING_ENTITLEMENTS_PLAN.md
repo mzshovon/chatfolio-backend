@@ -1,6 +1,6 @@
 # Pricing, Packages & Entitlements — Design Plan
 
-Status: **Phases 1 (foundation) and 2 (admin API: plans, feature values, models, grants, overrides, audit details) implemented** — tables, seeds, `EntitlementService`, Redis cache, `GET /pricing`, `GET /me/entitlements`. Phases 3–6 not started. No enforcement is active yet. Per-user usage/remaining in `/me/entitlements` arrives with phase 4 (quota tracking).
+Status: **Phases 1 (foundation), 2 (admin API) and 3 (model routing: OpenAI-compatible/Gemini adapter, ModelRouter, `/me/models`, fallback) implemented** — tables, seeds, `EntitlementService`, Redis cache, `GET /pricing`, `GET /me/entitlements`. Phases 4–6 not started. Per-model token accounting moved to phase 4 together with the token quota counters. No enforcement is active yet. Per-user usage/remaining in `/me/entitlements` arrives with phase 4 (quota tracking).
 Scope: Chatfolio-Be (this repo). The CMS and the public Chatfolio site consume the APIs defined in §9.
 
 ---

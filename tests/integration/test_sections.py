@@ -118,7 +118,7 @@ async def test_approve_flips_status(set_fake_llm: Callable[[str], None]) -> None
 
 async def test_generation_failure_returns_clean_503_not_raw_traceback() -> None:
     class BrokenLLMFactory:
-        def for_task(self, task: object) -> object:
+        def for_task(self, task: object, *, owner_id: object = None) -> object:
             raise RuntimeError("LLM_DEEPSEEK_API_KEY is not configured.")
 
     app.dependency_overrides[get_llm_provider_factory] = lambda: BrokenLLMFactory()

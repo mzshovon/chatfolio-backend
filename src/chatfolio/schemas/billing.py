@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -56,3 +57,27 @@ class EntitlementsResponse(BaseModel):
     source: str
     expires_at: datetime | None
     features: dict[str, FeatureEntitlementResponse]
+
+
+class ModelChoiceResponse(BaseModel):
+    id: str
+    provider: str
+    model_id: str
+    display_name: str
+    is_default: bool
+    allowed: bool
+    # None when selectable; "plan" = upgrade needed, "unavailable" = temporarily not offered.
+    locked_reason: str | None
+
+
+class MyModelsResponse(BaseModel):
+    selection_enabled: bool
+    selected_model_id: str | None
+    # What will actually answer right now (the fallback when nothing valid is selected).
+    effective_model_id: str
+    models: list[ModelChoiceResponse]
+
+
+class ModelPreferenceRequest(BaseModel):
+    # null clears the choice (back to the default model).
+    model_id: uuid.UUID | None

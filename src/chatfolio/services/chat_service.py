@@ -95,6 +95,7 @@ class ChatService:
             history=history,
             user_message=content,
             intent=intent,
+            owner_id=profile.user_id,
         )
         profile.ai_tokens_used += intent_tokens + reply_tokens
 

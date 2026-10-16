@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
@@ -28,4 +29,4 @@ class LLMFactory(Protocol):
     """Structural type for LLMProviderFactory — lets services/tests depend on 'something that
     resolves a provider per task' without importing the concrete factory (or a fake, in tests)."""
 
-    def for_task(self, task: "LLMTask") -> LLMProvider: ...
+    def for_task(self, task: "LLMTask", *, owner_id: uuid.UUID | None = None) -> LLMProvider: ...

@@ -27,7 +27,7 @@ class TrackingLLMFactory:
         self._responses = responses
         self.calls: list[LLMTask] = []
 
-    def for_task(self, task: LLMTask) -> LLMProvider:
+    def for_task(self, task: LLMTask, *, owner_id: object = None) -> LLMProvider:
         self.calls.append(task)
         return FakeLLMProvider(self._responses.get(task, ""))
 

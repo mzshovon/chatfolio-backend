@@ -15,6 +15,7 @@ from chatfolio.db.session import get_db_session
 from chatfolio.entitlements.cache import EntitlementCache
 from chatfolio.llm.base import LLMFactory
 from chatfolio.llm.factory import LLMProviderFactory
+from chatfolio.llm.model_router import ModelRouter
 from chatfolio.models.user import User, UserRole
 from chatfolio.notifications.base import EmailSender, SmsSender
 from chatfolio.notifications.sms_vendor import VendorSmsSender
@@ -101,8 +102,20 @@ async def get_job_queue() -> JobQueue:
 JobQueueDep = Annotated[JobQueue, Depends(get_job_queue)]
 
 
-def get_llm_provider_factory(settings: SettingsDep) -> LLMFactory:
-    return LLMProviderFactory(settings.llm)
+def get_model_router(
+    session: DbSessionDep,
+    entitlements: EntitlementServiceDep,
+    cache: EntitlementCacheDep,
+    settings: SettingsDep,
+) -> ModelRouter:
+    return ModelRouter(session, entitlements, cache, settings.llm)
+
+
+ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
+
+
+def get_llm_provider_factory(settings: SettingsDep, router: ModelRouterDep) -> LLMFactory:
+    return LLMProviderFactory(settings.llm, router)
 
 
 LLMFactoryDep = Annotated[LLMFactory, Depends(get_llm_provider_factory)]

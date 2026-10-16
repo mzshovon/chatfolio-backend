@@ -152,6 +152,16 @@ class LLMSettings(_Base):
     grok_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
 
+    # OpenAI-compatible `/chat/completions` roots, one per implemented provider. Overridable so
+    # a proxy/gateway, a regional endpoint or a mock server can be pointed at without a code
+    # change. A trailing slash is optional.
+    deepseek_base_url: str = "https://api.deepseek.com"
+    openai_base_url: str = "https://api.openai.com/v1"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    # Model used when a task is configured via env (LLM_DEFAULT_PROVIDER / LLM_PROVIDER_FOR_*) —
+    # i.e. INTENT, EXTRACTION and any caller without an owner. User-chosen models come from the DB.
+    deepseek_model: str = "deepseek-chat"
+
     # Empirically tuned, not guessed: local all-MiniLM-L6-v2 cosine similarity between a natural
     # recruiter question and a terse resume-style chunk ("Skill: PHP, category: ...") lands
     # ~0.26-0.5 for genuine matches (0.7+ only on near-exact keyword overlap) versus ~0.07-0.16
@@ -168,6 +178,27 @@ class LLMSettings(_Base):
     # outside the image) to tune the chat assistant's tone/rules without a code change or
     # rebuild — see that file's own header comment for the format.
     prompts_config_path: str | None = None
+
+    def api_key_for(self, provider: LLMProviderName) -> str | None:
+        """The configured API key for a provider, or None if unset/blank."""
+        secret = {
+            LLMProviderName.DEEPSEEK: self.deepseek_api_key,
+            LLMProviderName.OPENAI: self.openai_api_key,
+            LLMProviderName.GEMINI: self.gemini_api_key,
+            LLMProviderName.CLAUDE: self.anthropic_api_key,
+            LLMProviderName.GROK: self.grok_api_key,
+            LLMProviderName.OPENROUTER: self.openrouter_api_key,
+        }[provider]
+        value = secret.get_secret_value() if secret is not None else ""
+        return value or None
+
+    def base_url_for(self, provider: LLMProviderName) -> str | None:
+        """The configured API root for providers that have an adapter, else None."""
+        return {
+            LLMProviderName.DEEPSEEK: self.deepseek_base_url,
+            LLMProviderName.OPENAI: self.openai_base_url,
+            LLMProviderName.GEMINI: self.gemini_base_url,
+        }.get(provider)
 
     def provider_for(self, task: LLMTask) -> LLMProviderName:
         override = {
