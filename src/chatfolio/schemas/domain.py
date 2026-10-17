@@ -8,9 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # would point DNS at). Deliberately not stricter (no public-suffix-list check, no IDN handling)
 # — this is a Phase-2 stub with no verification logic yet; the real validation gate is DNS
 # ownership proof, whenever that gets built, not this regex.
-_DOMAIN_PATTERN = re.compile(
-    r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$"
-)
+_DOMAIN_PATTERN = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$")
 
 
 class AddDomainRequest(BaseModel):

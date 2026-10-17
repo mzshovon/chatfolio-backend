@@ -231,6 +231,24 @@ class GoogleOAuthSettings(_Base):
     calendar_events_url: str = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
 
+class SupportKoriSettings(_Base):
+    """Support Kori sells Chatfolio and settles payment itself; the buyer gets a license key and we
+    validate it against their API. A valid license = payment done."""
+
+    model_config = SettingsConfigDict(env_prefix="SUPPORT_KORI_", env_file=".env", extra="ignore")
+
+    # The product id registered with Support Kori. Required for activation; a plan can override it
+    # with its own `external_product_ref` (e.g. one Kori product per duration).
+    product_id: str | None = None
+    verify_url: str = "https://supportkori.com/api/licenses/verify"
+    timeout_seconds: float = 10.0
+    # A license is re-checked with Kori at most this often, to catch refunds/revocations.
+    revalidate_after_days: int = 7
+    # Wrong/unknown keys a single account may submit per hour before activation is paused for it
+    # (stops key-guessing; successful activations never count).
+    max_failed_attempts_per_hour: int = 10
+
+
 class FeatureFlags(_Base):
     model_config = SettingsConfigDict(env_prefix="FEATURE_", env_file=".env", extra="ignore")
 
@@ -263,6 +281,7 @@ class Settings(_Base):
     app: AppSettings = AppSettings()
     email: EmailSettings = EmailSettings()
     sms: SmsSettings = SmsSettings()
+    support_kori: SupportKoriSettings = SupportKoriSettings()
 
 
 @lru_cache

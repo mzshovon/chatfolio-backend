@@ -69,6 +69,7 @@ def _to_card(plan: Plan) -> PlanCardResponse:
         cta_label=plan.cta_label,
         footnote=plan.footnote,
         trial_days=plan.trial_days,
+        purchase_url=plan.purchase_url,
         bullets=_render_bullets(plan),
     )
 

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -57,6 +58,16 @@ class SubscriptionStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
     CANCELLED = "cancelled"
+
+
+class OrderStatus(StrEnum):
+    PAID = "paid"
+    REVOKED = "revoked"
+
+
+class LicenseStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
 
 
 class SubscriptionSource(StrEnum):
@@ -120,6 +131,13 @@ class Plan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Support Kori product_id for this plan; None falls back to SUPPORT_KORI_PRODUCT_ID (phase 5).
     external_product_ref: Mapped[str | None] = mapped_column(String(128), default=None)
     trial_days: Mapped[int] = mapped_column(Integer, default=0)
+    # Where the CTA sends a buyer to purchase (the Support Kori product page). Purchase happens off
+    # our site; the buyer then enters the license key in the CMS.
+    purchase_url: Mapped[str | None] = mapped_column(String(500), default=None)
+    # Which activation strategies may sell this plan (see billing.strategy.StrategyName).
+    allowed_strategies: Mapped[list[str]] = mapped_column(
+        JSON, default=lambda: ["support_kori_license"]
+    )
 
     # Pricing-card copy. `marketing_bullets` are templates like "Up to {links_max} links",
     # rendered from this plan's real feature values so copy cannot drift from what is enforced.
@@ -164,6 +182,13 @@ class Subscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             unique=True,
             postgresql_where="status = 'active'",
         ),
+        # A free trial is a once-per-account thing, whatever happened to it afterwards.
+        Index(
+            "uq_subscriptions_one_trial_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where="source = 'trial'",
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -180,6 +205,12 @@ class Subscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # None = never expires (lifetime plans). Expiry is always evaluated at read time against this
     # column; a cron that flips `status` is housekeeping, never the source of truth.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The purchase that created it (null for trials and admin grants).
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), default=None, index=True
+    )
+    # Set once the "your plan is ending" reminder has gone out, so it is sent only once.
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     plan: Mapped[Plan] = relationship(lazy="joined")
 
@@ -291,3 +322,68 @@ class LLMUsage(Base):
     model_label: Mapped[str] = mapped_column(String(160), primary_key=True)
     tokens: Mapped[int] = mapped_column(Integer, default=0)
     calls: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One row per purchase that activated a plan, whatever strategy sold it."""
+
+    __tablename__ = "orders"
+    __table_args__ = (UniqueConstraint("strategy", "external_ref", name="uq_orders_strategy_ref"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plans.id", ondelete="RESTRICT")
+    )
+    strategy: Mapped[str] = mapped_column(String(40))
+    # The strategy's own id for the purchase (for Support Kori: the license-key hash).
+    external_ref: Mapped[str] = mapped_column(String(128))
+    status: Mapped[OrderStatus] = mapped_column(_enum(OrderStatus), default=OrderStatus.PAID)
+    amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="BDT")
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # What the seller's API said (validation response) — audit trail; never contains the key.
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+
+
+class License(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A Support Kori license key bound to exactly one account. `license_key_hash` is the lookup
+    and the uniqueness guarantee (one key can never belong to two users); the key itself is kept
+    only encrypted, because re-validating it with Support Kori later (refund detection) needs it."""
+
+    __tablename__ = "licenses"
+
+    license_key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    license_key_encrypted: Mapped[str] = mapped_column(Text)
+    key_last4: Mapped[str] = mapped_column(String(4))
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plans.id", ondelete="RESTRICT")
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE")
+    )
+    status: Mapped[LicenseStatus] = mapped_column(
+        _enum(LicenseStatus), default=LicenseStatus.ACTIVE
+    )
+    validated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_revalidated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+
+class AppSetting(Base):
+    """Small admin-editable settings (JSON) that must change without a deploy."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

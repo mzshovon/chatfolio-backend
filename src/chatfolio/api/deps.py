@@ -7,6 +7,8 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chatfolio.billing.strategy import ActivationStrategy, StrategyName
+from chatfolio.billing.support_kori import SupportKoriLicenseStrategy
 from chatfolio.config.settings import Settings, get_settings
 from chatfolio.core.exceptions import ForbiddenError, UnauthorizedError
 from chatfolio.core.redis import get_redis
@@ -23,6 +25,8 @@ from chatfolio.notifications.sms_vendor import VendorSmsSender
 from chatfolio.notifications.smtp_email import SmtpEmailSender
 from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.repositories.user_repository import UserRepository
+from chatfolio.services.billing_service import BillingService
+from chatfolio.services.billing_settings_service import BillingSettingsService
 from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.entitlement_service import EntitlementService
 from chatfolio.services.portfolio_service import PortfolioService, PublicPortfolioService
@@ -90,6 +94,41 @@ def get_public_portfolio_service(
 
 PublicPortfolioServiceDep = Annotated[
     PublicPortfolioService, Depends(get_public_portfolio_service)
+]
+
+
+def get_activation_strategies(settings: SettingsDep) -> dict[StrategyName, ActivationStrategy]:
+    """Which strategies exist in this deployment. Tests override this to fake the seller."""
+    return {StrategyName.SUPPORT_KORI_LICENSE: SupportKoriLicenseStrategy(settings.support_kori)}
+
+
+ActivationStrategiesDep = Annotated[
+    dict[StrategyName, ActivationStrategy], Depends(get_activation_strategies)
+]
+
+
+def get_billing_service(
+    session: DbSessionDep,
+    cache: EntitlementCacheDep,
+    settings: SettingsDep,
+    strategies: ActivationStrategiesDep,
+) -> BillingService:
+    return BillingService(
+        session, cache, get_redis(), settings.security, settings.support_kori, strategies
+    )
+
+
+BillingServiceDep = Annotated[BillingService, Depends(get_billing_service)]
+
+
+def get_billing_settings_service(
+    session: DbSessionDep, cache: EntitlementCacheDep
+) -> BillingSettingsService:
+    return BillingSettingsService(session, cache)
+
+
+BillingSettingsServiceDep = Annotated[
+    BillingSettingsService, Depends(get_billing_settings_service)
 ]
 
 

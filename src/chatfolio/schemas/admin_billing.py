@@ -6,6 +6,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from chatfolio.billing.strategy import StrategyName
 from chatfolio.config.settings import LLMProviderName
 from chatfolio.entitlements.catalog import FEATURES_BY_KEY
 from chatfolio.models.billing import DurationUnit, QuotaPeriod
@@ -16,6 +17,20 @@ SUPPORTED_PROVIDERS = frozenset(
     {LLMProviderName.DEEPSEEK, LLMProviderName.OPENAI, LLMProviderName.GEMINI}
 )
 MAX_BULLETS = 12
+
+
+def _validate_strategies(names: list[str]) -> list[str]:
+    valid = {s.value for s in StrategyName}
+    unknown = [n for n in names if n not in valid]
+    if unknown:
+        raise ValueError(f"Unknown strategies: {', '.join(unknown)}.")
+    return sorted(set(names))
+
+
+def _validate_https(url: str | None) -> str | None:
+    if url is not None and not url.startswith("https://"):
+        raise ValueError("purchase_url must be an https:// URL.")
+    return url
 
 
 def _validate_bullets(bullets: list[str]) -> list[str]:
@@ -67,6 +82,8 @@ class PlanAdminResponse(BaseModel):
     duration_count: int
     external_product_ref: str | None
     trial_days: int
+    purchase_url: str | None
+    allowed_strategies: list[str]
     badge_text: str | None
     cta_label: str
     footnote: str
@@ -90,6 +107,10 @@ class _PlanFields(BaseModel):
     duration_count: int = Field(default=0, ge=0)
     external_product_ref: str | None = Field(default=None, max_length=128)
     trial_days: int = Field(default=0, ge=0, le=365)
+    purchase_url: str | None = Field(default=None, max_length=500)
+    allowed_strategies: list[str] = Field(
+        default_factory=lambda: [StrategyName.SUPPORT_KORI_LICENSE.value]
+    )
     badge_text: str | None = Field(default=None, max_length=50)
     cta_label: str = Field(default="", max_length=100)
     footnote: str = Field(default="", max_length=255)
@@ -99,6 +120,16 @@ class _PlanFields(BaseModel):
     @classmethod
     def _bullets(cls, value: list[str]) -> list[str]:
         return _validate_bullets(value)
+
+    @field_validator("purchase_url")
+    @classmethod
+    def _purchase_url(cls, value: str | None) -> str | None:
+        return _validate_https(value)
+
+    @field_validator("allowed_strategies")
+    @classmethod
+    def _strategies(cls, value: list[str]) -> list[str]:
+        return _validate_strategies(value)
 
 
 def _check_duration(unit: DurationUnit, count: int) -> None:
@@ -133,6 +164,8 @@ class PlanUpdateRequest(BaseModel):
     duration_count: int | None = Field(default=None, ge=0)
     external_product_ref: str | None = Field(default=None, max_length=128)
     trial_days: int | None = Field(default=None, ge=0, le=365)
+    purchase_url: str | None = Field(default=None, max_length=500)
+    allowed_strategies: list[str] | None = None
     badge_text: str | None = Field(default=None, max_length=50)
     cta_label: str | None = Field(default=None, max_length=100)
     footnote: str | None = Field(default=None, max_length=255)
@@ -142,6 +175,16 @@ class PlanUpdateRequest(BaseModel):
     @classmethod
     def _bullets(cls, value: list[str] | None) -> list[str] | None:
         return None if value is None else _validate_bullets(value)
+
+    @field_validator("purchase_url")
+    @classmethod
+    def _purchase_url(cls, value: str | None) -> str | None:
+        return _validate_https(value)
+
+    @field_validator("allowed_strategies")
+    @classmethod
+    def _strategies(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _validate_strategies(value)
 
 
 class PlanFeaturesUpdateRequest(BaseModel):
@@ -257,3 +300,39 @@ class OverrideResponse(BaseModel):
     reason: str
     granted_by: uuid.UUID | None
     created_at: datetime
+
+
+class BillingSettingsResponse(BaseModel):
+    enabled_strategies: list[str]
+    max_activation_delay_days: int | None
+    # Strategies that exist in code, so the admin UI can show what can be switched on.
+    available_strategies: list[str]
+
+
+class BillingSettingsUpdateRequest(BaseModel):
+    enabled_strategies: list[str]
+    max_activation_delay_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class OrderAdminResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    user_email: str
+    plan_slug: str
+    strategy: str
+    status: str
+    amount_minor: int
+    currency: str
+    purchased_at: datetime | None
+    created_at: datetime
+
+
+class LicenseAdminResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    user_email: str
+    plan_slug: str
+    key_last4: str
+    status: str
+    validated_at: datetime
+    last_revalidated_at: datetime | None

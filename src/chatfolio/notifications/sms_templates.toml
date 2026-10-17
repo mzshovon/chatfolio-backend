@@ -4,9 +4,11 @@
 #   RECRUITER_ALERT    {name}, {recruiter_name}, {company}
 #   MEETING_ALERT      {name}, {recruiter_name}, {meeting_date}, {meeting_time}
 #   OTP_VERIFICATION   {otp}, {otp_ttl_minutes}
+#   SUBSCRIPTION_EXPIRING   {name}, {plan}, {end_date}
 
 [templates]
 WELCOME = "Welcome to Chatfolio, {name}! Your account is ready. Build your AI-powered portfolio and let recruiters chat with it."
 RECRUITER_ALERT = "Hi {name}, {recruiter_name} from {company} just started a chat with your Chatfolio."
 MEETING_ALERT = "Hi {name}, {recruiter_name} booked a meeting with you on {meeting_date} at {meeting_time}. Check your email for the Google Meet invite."
 OTP_VERIFICATION = "Your Chatfolio verification code is {otp}. It expires in {otp_ttl_minutes} minutes."
+SUBSCRIPTION_EXPIRING = "Hi {name}, your Chatfolio {plan} plan ends on {end_date}. Activate a new license key to keep all your features."

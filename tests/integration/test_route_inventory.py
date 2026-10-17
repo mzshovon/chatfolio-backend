@@ -18,6 +18,7 @@ from fastapi.routing import APIRoute
 from chatfolio.api.deps import require_admin
 from chatfolio.api.v1 import (
     admin,
+    admin_billing,
     admin_plans,
     admin_rbac,
     admin_subscriptions,
@@ -63,12 +64,18 @@ SERVICE_ENFORCED: dict[Op, str] = {
     ("POST", "/api/v1/sections/{section_id}/regenerate"): "ai_tokens_limit + model routing",
     ("GET", "/api/v1/me/entitlements"): "reports usage",
     ("PUT", "/api/v1/me/models/preference"): "model_selection + plan_models",
+    ("POST", "/api/v1/billing/activate"): (
+        "enabled strategy, license one-key-one-user, seller verification, attempt throttle"
+    ),
+    ("POST", "/api/v1/billing/trial"): "verified phone, one trial per account and phone",
 }
 
 UNGATED: set[Op] = {
     ("POST", "/api/v1/cv/upload"),  # tokens used by extraction are tallied, never blocked
     ("POST", "/api/v1/cv/{cv_id}/retry"),
     ("GET", "/api/v1/cv/{cv_id}/status"),
+    ("GET", "/api/v1/billing/strategies"),  # read-only: what can be bought / started
+    ("GET", "/api/v1/billing/subscription"),  # read-only: the caller's own subscriptions
     ("GET", "/api/v1/health"),
     ("GET", "/api/v1/me/models"),
     ("GET", "/api/v1/meeting-settings"),  # read-only connection state
@@ -162,7 +169,11 @@ def test_no_route_carries_a_feature_check_that_is_not_declared() -> None:
 
 def test_every_admin_route_requires_an_admin() -> None:
     routes = _routes(
-        admin.router, admin_rbac.router, admin_plans.router, admin_subscriptions.router
+        admin.router,
+        admin_billing.router,
+        admin_rbac.router,
+        admin_plans.router,
+        admin_subscriptions.router,
     )
     live = _openapi_ops("/api/v1/admin")
     assert live <= set(routes), (

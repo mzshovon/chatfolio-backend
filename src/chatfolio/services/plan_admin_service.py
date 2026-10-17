@@ -30,7 +30,7 @@ from chatfolio.schemas.admin_billing import (
 from chatfolio.services.audit import record_admin_action
 
 # Fields on Plan that a PATCH may set to null; everything else must keep a real value.
-_NULLABLE_PLAN_FIELDS = frozenset({"external_product_ref", "badge_text"})
+_NULLABLE_PLAN_FIELDS = frozenset({"external_product_ref", "badge_text", "purchase_url"})
 
 
 class PlanAdminService:
@@ -311,6 +311,8 @@ class PlanAdminService:
             duration_count=plan.duration_count,
             external_product_ref=plan.external_product_ref,
             trial_days=plan.trial_days,
+            purchase_url=plan.purchase_url,
+            allowed_strategies=list(plan.allowed_strategies),
             badge_text=plan.badge_text,
             cta_label=plan.cta_label,
             footnote=plan.footnote,

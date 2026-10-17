@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PriceResponse(BaseModel):
@@ -30,6 +30,8 @@ class PlanCardResponse(BaseModel):
     cta_label: str
     footnote: str
     trial_days: int
+    # Where the CTA sends a buyer (the seller's product page); null until the admin sets one.
+    purchase_url: str | None = None
     bullets: list[str]
 
 
@@ -85,3 +87,36 @@ class MyModelsResponse(BaseModel):
 class ModelPreferenceRequest(BaseModel):
     # null clears the choice (back to the default model).
     model_id: uuid.UUID | None
+
+
+class ActivateLicenseRequest(BaseModel):
+    license_key: str = Field(min_length=6, max_length=200)
+    # Optional when only one plan can be activated with a license; required otherwise.
+    plan_slug: str | None = Field(default=None, max_length=63)
+
+
+class StartTrialRequest(BaseModel):
+    plan_slug: str = Field(max_length=63)
+
+
+class StrategyPlanResponse(BaseModel):
+    slug: str
+    name: str
+    purchase_url: str | None
+
+
+class StrategyResponse(BaseModel):
+    name: str
+    label: str
+    plans: list[StrategyPlanResponse]
+
+
+class TrialOfferResponse(BaseModel):
+    plan_slug: str
+    days: int
+
+
+class StrategiesResponse(BaseModel):
+    strategies: list[StrategyResponse]
+    # Free trials this account can still start (empty once used or when not eligible).
+    trials: list[TrialOfferResponse]

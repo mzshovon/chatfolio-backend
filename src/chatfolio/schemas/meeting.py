@@ -62,7 +62,9 @@ class MeetingRequest(BaseModel):
     # IANA name, e.g. "Asia/Dhaka". Only affects how Google displays the event.
     timezone: str = "UTC"
     title: str = Field(default="Interview via Chatfolio", min_length=1, max_length=255)
-    description: str | None = Field(default="Interview scheduled through Chatfolio.", max_length=2000)
+    description: str | None = Field(
+        default="Interview scheduled through Chatfolio.", max_length=2000
+    )
     # Optional client-generated idempotency key: resending the same value (e.g. a double click or
     # a retry after a timeout) reuses Google's conference request instead of creating a second
     # Meet. Generated server-side when omitted.

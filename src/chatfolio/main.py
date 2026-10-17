@@ -10,10 +10,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from chatfolio.api.v1.admin import router as admin_router
+from chatfolio.api.v1.admin_billing import router as admin_billing_router
 from chatfolio.api.v1.admin_plans import router as admin_plans_router
 from chatfolio.api.v1.admin_rbac import router as admin_rbac_router
 from chatfolio.api.v1.admin_subscriptions import router as admin_subscriptions_router
 from chatfolio.api.v1.auth import router as auth_router
+from chatfolio.api.v1.billing import router as billing_router
 from chatfolio.api.v1.custom_domain import domains_router as custom_domains_router
 from chatfolio.api.v1.custom_domain import router as custom_domain_router
 from chatfolio.api.v1.cv import router as cv_router
@@ -114,9 +116,11 @@ def create_app() -> FastAPI:
     app.include_router(meeting_settings_router, prefix="/api/v1")
     app.include_router(pricing_router, prefix="/api/v1")
     app.include_router(me_router, prefix="/api/v1")
+    app.include_router(billing_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(admin_rbac_router, prefix="/api/v1")
     app.include_router(admin_plans_router, prefix="/api/v1")
+    app.include_router(admin_billing_router, prefix="/api/v1")
     app.include_router(admin_subscriptions_router, prefix="/api/v1")
 
     return app
