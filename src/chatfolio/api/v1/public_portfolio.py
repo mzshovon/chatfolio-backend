@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
 
-from chatfolio.api.deps import DbSessionDep, StorageBackendDep
+from chatfolio.api.deps import PublicPortfolioServiceDep, StorageBackendDep
 from chatfolio.core.exceptions import NotFoundError, ServiceUnavailableError
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import SectionType
@@ -13,7 +13,6 @@ from chatfolio.models.profile import (
     Project,
     Skill,
 )
-from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.schemas.profile import (
     EducationResponse,
     ExperienceResponse,
@@ -24,10 +23,6 @@ from chatfolio.schemas.public_portfolio import PortfolioSearchResult, PublicChat
 from chatfolio.services.portfolio_service import PublicPortfolioService
 
 router = APIRouter(prefix="/public/chatfolio", tags=["public"])
-
-
-def _service(session: DbSessionDep) -> PublicPortfolioService:
-    return PublicPortfolioService(session, ProfileRepository(session))
 
 
 async def _build_response(
@@ -58,12 +53,13 @@ async def _build_response(
         contact_cta_config=chatfolio.contact_cta_config,
         cv_downloadable=chatfolio.cv_downloadable,
         recruiter_count=recruiter_count,
+        show_badge=await service.show_badge(profile.user_id),
     )
 
 
 @router.get("/search", response_model=list[PortfolioSearchResult], tags=["public"])
 async def search_public_chatfolios(
-    session: DbSessionDep,
+    service: PublicPortfolioServiceDep,
     username: str | None = Query(default=None, description="Partial match on the public slug."),
     location: str | None = Query(default=None, description="Partial match on candidate location."),
     job_type: JobType | None = Query(default=None, description="Remote, onsite, or hybrid."),
@@ -71,7 +67,6 @@ async def search_public_chatfolios(
         default=None, description="Partial match on candidate title, e.g. 'Software Engineer'."
     ),
 ) -> list[PortfolioSearchResult]:
-    service = _service(session)
     matches = await service.search_published(
         username=username, location=location, job_type=job_type, field=field
     )
@@ -87,9 +82,8 @@ async def search_public_chatfolios(
 
 @router.get("/{slug}", response_model=None)
 async def get_public_chatfolio(
-    slug: str, session: DbSessionDep
+    slug: str, service: PublicPortfolioServiceDep
 ) -> PublicChatfolioResponse | RedirectResponse:
-    service = _service(session)
     chatfolio = await service.get_published_by_slug(slug)
 
     if chatfolio is None:
@@ -114,9 +108,8 @@ async def get_public_chatfolio(
 
 @router.get("/{slug}/cv", response_model=None)
 async def download_public_cv(
-    slug: str, session: DbSessionDep, storage: StorageBackendDep
+    slug: str, service: PublicPortfolioServiceDep, storage: StorageBackendDep
 ) -> RedirectResponse:
-    service = _service(session)
     chatfolio = await service.get_published_by_slug(slug)
     if chatfolio is None or not chatfolio.cv_downloadable:
         raise NotFoundError("A downloadable CV is not available for this Chatfolio.")

@@ -27,6 +27,8 @@ class PublicChatfolioResponse(BaseModel):
     contact_cta_config: dict[str, str]
     cv_downloadable: bool
     recruiter_count: int
+    # False when the owner's plan removes the Chatfolio badge.
+    show_badge: bool = True
 
 
 class PortfolioSearchResult(BaseModel):

@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chatfolio.config.settings import SecuritySettings
 from chatfolio.core.exceptions import (
     ConflictError,
+    FeatureNotInPlanError,
     ForbiddenError,
+    LimitReachedError,
     NotFoundError,
     TooManyRequestsError,
     UnauthorizedError,
@@ -22,6 +24,7 @@ from chatfolio.core.security import (
     decrypt_secret,
     encrypt_secret,
 )
+from chatfolio.entitlements.catalog import FeatureKey
 from chatfolio.models.chat import ChatSession
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.meeting import GoogleCalendarConnection
@@ -29,6 +32,7 @@ from chatfolio.models.profile import CandidateProfile
 from chatfolio.models.user import User
 from chatfolio.repositories.meeting_repository import MeetingRepository
 from chatfolio.schemas.meeting import MeetingRequest, MeetingResponse
+from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.google_oauth_client import GoogleOAuthClient
 from chatfolio.services.sms_service import SmsService, SmsTemplate, resolve_candidate_mobile
 
@@ -45,11 +49,13 @@ class MeetingSettingsService:
         repository: MeetingRepository,
         oauth_client: GoogleOAuthClient,
         security_settings: SecuritySettings,
+        guard: EntitlementGuard,
     ) -> None:
         self._session = session
         self._repository = repository
         self._oauth_client = oauth_client
         self._security_settings = security_settings
+        self._guard = guard
 
     async def get_connection(self, user: User) -> GoogleCalendarConnection | None:
         return await self._repository.get_by_user_id(user.id)
@@ -154,8 +160,15 @@ class MeetingSettingsService:
 
     async def schedule_meeting(self, user: User, request: MeetingRequest) -> MeetingResponse:
         """Creates a Google Calendar event with a Meet link on the candidate's primary calendar
-        and emails the invite to the attendee."""
-        return await self._schedule_meeting_for(user.id, request)
+        and emails the invite to the attendee. Needs `calendar_booking` and counts against the
+        plan's `meetings_limit` (a failed booking gives the unit back)."""
+        await self._guard.require_feature(user.id, FeatureKey.CALENDAR_BOOKING)
+        await self._guard.consume(user.id, FeatureKey.MEETINGS_LIMIT)
+        try:
+            return await self._schedule_meeting_for(user.id, request)
+        except BaseException:
+            await self._guard.release(user.id, FeatureKey.MEETINGS_LIMIT)
+            raise
 
     async def schedule_public_meeting(
         self,
@@ -191,16 +204,24 @@ class MeetingSettingsService:
                 "A meeting was just requested with this candidate. Please try again in a few minutes."
             )
 
+        # Reserved only after the per-session/cool-down checks above, so a rejected request never
+        # burns the owner's allowance; given back below if Google then refuses.
+        await self._reserve_public_meeting(profile.user_id)
         try:
-            meeting = await self._schedule_meeting_for(profile.user_id, request)
-        except (NotFoundError, UnauthorizedError, ValidationFailedError) as exc:
-            # ValidationFailedError here covers Google rejecting the stored refresh token (revoked
-            # access) as well as a bad `start`; only the former is a connection problem.
-            if isinstance(exc, ValidationFailedError) and "refresh token" not in exc.message:
-                raise
-            raise ConflictError(
-                "This candidate isn't accepting meeting requests right now."
-            ) from exc
+            try:
+                meeting = await self._schedule_meeting_for(profile.user_id, request)
+            except (NotFoundError, UnauthorizedError, ValidationFailedError) as exc:
+                # ValidationFailedError here covers Google rejecting the stored refresh token
+                # (revoked access) as well as a bad `start`; only the former is a connection
+                # problem.
+                if isinstance(exc, ValidationFailedError) and "refresh token" not in exc.message:
+                    raise
+                raise ConflictError(
+                    "This candidate isn't accepting meeting requests right now."
+                ) from exc
+        except BaseException:
+            await self._guard.release(profile.user_id, FeatureKey.MEETINGS_LIMIT)
+            raise
 
         # Only recorded once Google accepted the event: a failed attempt must not burn the
         # session's one request or start the candidate's cool-down.
@@ -220,6 +241,17 @@ class MeetingSettingsService:
                     meeting_time=f"{local_start.strftime('%I:%M %p')} ({meeting.timezone})",
                 )
         return meeting
+
+    async def _reserve_public_meeting(self, owner_id: uuid.UUID) -> None:
+        """A recruiter learns nothing about plans: a disabled feature or a spent allowance both
+        read as the same "not accepting requests" the candidate's missing calendar produces."""
+        try:
+            await self._guard.require_feature(owner_id, FeatureKey.CALENDAR_BOOKING)
+            await self._guard.consume(owner_id, FeatureKey.MEETINGS_LIMIT)
+        except (FeatureNotInPlanError, LimitReachedError):
+            raise ConflictError(
+                "This candidate isn't accepting meeting requests right now."
+            ) from None
 
     async def _schedule_meeting_for(
         self, user_id: uuid.UUID, request: MeetingRequest

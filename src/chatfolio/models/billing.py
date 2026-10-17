@@ -262,3 +262,32 @@ class UserModelPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class UsageCounter(Base):
+    """Durable per-period consumption of a flow feature (chats, meetings, publishes, tokens).
+    Written in the same transaction as the action it counts; Redis is only the fast gate and is
+    rebuilt from this table when a key is missing."""
+
+    __tablename__ = "usage_counters"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    feature_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    period_key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    used: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LLMUsage(Base):
+    """Tokens/calls per user per month per model, for cost reporting by plan and model."""
+
+    __tablename__ = "llm_usage"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    period_key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    model_label: Mapped[str] = mapped_column(String(160), primary_key=True)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    calls: Mapped[int] = mapped_column(Integer, default=0)

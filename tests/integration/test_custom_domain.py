@@ -9,6 +9,7 @@ from chatfolio.db.session import get_sessionmaker
 from chatfolio.main import app
 from chatfolio.models.profile import CandidateProfile
 from chatfolio.models.user import User
+from tests.factories.plans import grant_premium
 from tests.factories.publish_flow import authed_client
 
 
@@ -41,6 +42,7 @@ async def test_domain_endpoints_disabled_by_default() -> None:
 
 async def test_add_get_remove_domain_when_enabled(custom_domains_enabled: None) -> None:
     client, headers = await authed_client("domain-crud@example.com")
+    await grant_premium(client, headers)
 
     missing = await client.get("/api/v1/portfolio-settings/domain", headers=headers)
     assert missing.status_code == 404
@@ -70,6 +72,8 @@ async def test_add_get_remove_domain_when_enabled(custom_domains_enabled: None) 
 async def test_domain_already_taken_returns_conflict(custom_domains_enabled: None) -> None:
     client_a, headers_a = await authed_client("domain-taken-a@example.com")
     client_b, headers_b = await authed_client("domain-taken-b@example.com")
+    await grant_premium(client_a, headers_a)
+    await grant_premium(client_b, headers_b)
 
     first = await client_a.post(
         "/api/v1/portfolio-settings/domain",
@@ -88,6 +92,7 @@ async def test_domain_already_taken_returns_conflict(custom_domains_enabled: Non
 
 async def test_adding_domain_replaces_previous_one(custom_domains_enabled: None) -> None:
     client, headers = await authed_client("domain-replace@example.com")
+    await grant_premium(client, headers)
 
     await client.post(
         "/api/v1/portfolio-settings/domain", headers=headers, json={"domain": "first.example.com"}
@@ -103,6 +108,7 @@ async def test_adding_domain_replaces_previous_one(custom_domains_enabled: None)
 
 async def test_new_profile_defaults_to_free_plan_with_no_usage_limits() -> None:
     client, headers = await authed_client("plan-default@example.com")
+    await grant_premium(client, headers)
     await client.patch("/api/v1/profiles/me", headers=headers, json={"full_name": "Someone"})
 
     sessionmaker = get_sessionmaker()

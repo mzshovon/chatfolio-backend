@@ -8,6 +8,7 @@ from chatfolio.api.deps import get_llm_provider_factory, get_vector_store
 from chatfolio.main import app
 from tests.factories.fake_llm import FakeLLMFactory
 from tests.factories.fake_vectorstore import FakeVectorStore
+from tests.factories.plans import grant_premium
 from tests.factories.publish_flow import authed_client, publish_full_profile
 
 
@@ -44,9 +45,10 @@ async def _send_recruiter_message(slug: str, recruiter_email: str, content: str)
 async def test_list_conversations_returns_owned_session_with_message_count(
     set_fake_llm: Callable[[str], None],
 ) -> None:
-    _, owner_headers, slug = await publish_full_profile(
+    owner, owner_headers, slug = await publish_full_profile(
         "dash-list-owner@example.com", set_fake_llm, "dash-1"
     )
+    await grant_premium(owner, owner_headers)  # recruiter insights are a paid feature
     await _send_recruiter_message(slug, "dash-list-recruiter@example.com", "Hi there!")
 
     owner_client, _ = await authed_client("dash-list-owner@example.com")
@@ -176,7 +178,8 @@ async def test_analytics_reflects_real_visits_and_defaults(
     # No 30-days-ago period to compare against yet for a page just published in this test.
     assert body["portfolio_visitors_delta_pct"] is None
     assert body["ai_tokens_used"] >= 0
-    assert body["ai_tokens_monthly_quota"] == 1_000_000
+    # The budget now comes from the owner's plan (free = 200k/month), not a global constant.
+    assert body["ai_tokens_monthly_quota"] == 200_000
 
 
 async def test_analytics_requires_auth() -> None:

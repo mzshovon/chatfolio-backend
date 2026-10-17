@@ -2,16 +2,24 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatfolio.core.exceptions import NotFoundError, TooManyRequestsError
+from chatfolio.core.exceptions import (
+    ChatUnavailableError,
+    LimitReachedError,
+    NotFoundError,
+    TooManyRequestsError,
+)
+from chatfolio.entitlements.catalog import UNLIMITED, FeatureKey
 from chatfolio.llm.base import Message
 from chatfolio.models.chat import ChatMessage, ChatSession, MessageRole, RecruiterMetadata
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
 from chatfolio.models.profile import CandidateProfile
 from chatfolio.models.user import User
+from chatfolio.services.chatfolio_resolver import ChatfolioResolver
+from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.rag_service import RAGService
 from chatfolio.services.sms_service import SmsService, SmsTemplate, resolve_candidate_mobile
 
@@ -26,17 +34,16 @@ HISTORY_WINDOW = 5
 
 
 class ChatService:
-    def __init__(self, session: AsyncSession, rag_service: RAGService) -> None:
+    def __init__(
+        self, session: AsyncSession, rag_service: RAGService, guard: EntitlementGuard
+    ) -> None:
         self._session = session
         self._rag = rag_service
+        self._guard = guard
+        self._resolver = ChatfolioResolver(session, guard)
 
     async def start_session(self, slug: str) -> ChatSession:
-        result = await self._session.execute(
-            select(PublicChatfolio).where(
-                PublicChatfolio.slug == slug, PublicChatfolio.is_published.is_(True)
-            )
-        )
-        chatfolio = result.scalar_one_or_none()
+        chatfolio = await self._resolver.resolve_published(slug)
         if chatfolio is None:
             raise NotFoundError("This Chatfolio is not available.")
 
@@ -65,6 +72,68 @@ class ChatService:
         if profile is None:
             raise NotFoundError("This Chatfolio is not available.")
 
+        owner_id = profile.user_id
+        reserved_chat = await self._admit(chat_session, owner_id, is_first_message)
+        try:
+            return await self._reply(
+                chat_session,
+                profile,
+                content,
+                is_first_message=is_first_message,
+                sms_service=sms_service,
+                background_tasks=background_tasks,
+            )
+        except BaseException:
+            # The action failed after its quota unit was reserved — give it back so a transient
+            # LLM error doesn't cost the owner a chat.
+            if reserved_chat:
+                await self._guard.release(owner_id, FeatureKey.RECRUITER_CHATS_LIMIT)
+            raise
+
+    async def _admit(
+        self, chat_session: ChatSession, owner_id: uuid.UUID, is_first_message: bool
+    ) -> bool:
+        """Plan checks for this message, on the *owner's* entitlements. A recruiter only ever sees
+        the neutral CHAT_UNAVAILABLE — never that a limit or a plan is involved. Returns whether a
+        chat unit was reserved (the first message of a session) so a failure can release it."""
+        try:
+            await self._guard.ensure_open(owner_id, FeatureKey.AI_TOKENS_LIMIT)
+            if is_first_message:
+                await self._guard.consume(owner_id, FeatureKey.RECRUITER_CHATS_LIMIT)
+                return True
+            await self._ensure_session_room(chat_session, owner_id)
+        except LimitReachedError:
+            raise ChatUnavailableError() from None
+        return False
+
+    async def _ensure_session_room(self, chat_session: ChatSession, owner_id: uuid.UUID) -> None:
+        entitlements = await self._guard.get(owner_id)
+        cap = entitlements.limit(FeatureKey.CHAT_MESSAGES_PER_SESSION)
+        if cap == UNLIMITED:
+            return
+        sent = (
+            await self._session.execute(
+                select(func.count())
+                .select_from(ChatMessage)
+                .where(
+                    ChatMessage.session_id == chat_session.id,
+                    ChatMessage.role == MessageRole.RECRUITER,
+                )
+            )
+        ).scalar_one()
+        if sent >= cap:
+            raise LimitReachedError(FeatureKey.CHAT_MESSAGES_PER_SESSION.value, cap, sent)
+
+    async def _reply(
+        self,
+        chat_session: ChatSession,
+        profile: CandidateProfile,
+        content: str,
+        *,
+        is_first_message: bool,
+        sms_service: SmsService | None,
+        background_tasks: BackgroundTasks | None,
+    ) -> ChatMessage:
         history = await self._recent_history(chat_session.id)
 
         recruiter_message = ChatMessage(
@@ -78,9 +147,7 @@ class ChatService:
         await self._merge_recruiter_metadata(chat_session.id, extracted_context)
 
         if is_first_message and sms_service is not None and background_tasks is not None:
-            await self._alert_candidate(
-                profile, extracted_context, sms_service, background_tasks
-            )
+            await self._alert_candidate(profile, extracted_context, sms_service, background_tasks)
 
         sections = await self._approved_sections(profile.id)
         retrieved = await self._rag.retrieve(profile.id, content)
@@ -98,6 +165,9 @@ class ChatService:
             owner_id=profile.user_id,
         )
         profile.ai_tokens_used += intent_tokens + reply_tokens
+        await self._guard.add_usage(
+            profile.user_id, FeatureKey.AI_TOKENS_LIMIT, intent_tokens + reply_tokens
+        )
 
         assistant_message = ChatMessage(
             session_id=chat_session.id,

@@ -23,6 +23,7 @@ from chatfolio.llm.providers.openai_compatible import OpenAICompatibleProvider
 from chatfolio.main import app
 from chatfolio.models.billing import (
     LLMModel,
+    LLMUsage,
     Plan,
     PlanModel,
     Subscription,
@@ -31,6 +32,7 @@ from chatfolio.models.billing import (
     UserModelPreference,
 )
 from chatfolio.services.entitlement_service import EntitlementService
+from chatfolio.services.quota_service import QuotaService
 from tests.factories.fake_llm import FakeLLMFactory, FakeLLMProvider
 from tests.factories.publish_flow import authed_client, publish_full_profile
 
@@ -82,7 +84,15 @@ async def _bump() -> None:
 
 
 def _llm_settings(**keys: str) -> LLMSettings:
-    return LLMSettings(**{f"{k}_api_key": SecretStr(v) for k, v in keys.items()})  # type: ignore[arg-type]
+    """Hermetic: ignores the developer's real .env (which may hold live API keys) so a test only
+    ever sees the keys it passes in."""
+    secrets: dict[str, SecretStr | None] = {
+        "deepseek_api_key": None,
+        "openai_api_key": None,
+        "gemini_api_key": None,
+    }
+    secrets.update({f"{k}_api_key": SecretStr(v) for k, v in keys.items()})
+    return LLMSettings(_env_file=None, **secrets)  # type: ignore[call-arg, arg-type]
 
 
 async def _router(session: Any, **keys: str) -> ModelRouter:
@@ -133,7 +143,7 @@ async def test_each_provider_posts_to_its_own_chat_completions_url(
     adapter = OpenAICompatibleProvider(
         api_key="sk-secret",
         model="m-1",
-        base_url=LLMSettings().base_url_for(provider) or "",
+        base_url=_llm_settings().base_url_for(provider) or "",
         transport=transport,
     )
 
@@ -313,7 +323,11 @@ class _TestFactory(LLMProviderFactory):
     """Real routing, fake network: `build` hands out recording providers instead."""
 
     def __init__(self, router: ModelRouter, failing: frozenset[str] = frozenset()) -> None:
-        super().__init__(_llm_settings(openai="k", deepseek="k"), router)
+        super().__init__(
+            _llm_settings(openai="k", deepseek="k"),
+            router,
+            QuotaService(router._session, get_redis()),
+        )
         self.built: list[str] = []
         self._failing = failing
 
@@ -444,6 +458,14 @@ async def test_public_chat_is_answered_by_the_owners_chosen_model(
 
     assert reply == "reply from gpt-test"
     assert built[0].built == ["gpt-test"]
+    # Cost reporting: tokens/calls are recorded per user, per month, per model.
+    async with get_sessionmaker()() as session:
+        rows = (
+            (await session.execute(select(LLMUsage).where(LLMUsage.user_id == owner_id)))
+            .scalars()
+            .all()
+        )
+    assert [(r.model_label, r.tokens, r.calls) for r in rows] == [("openai/gpt-test", 7, 1)]
 
 
 async def test_public_chat_for_a_free_owner_uses_the_default_model(

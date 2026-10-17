@@ -49,6 +49,10 @@ class FeatureEntitlementResponse(BaseModel):
     bool_value: bool | None
     unlimited: bool
     period: str | None
+    # Consumption in the current window (flow features) or right now (links, domains); null for
+    # features that aren't countable (gates, history days). `remaining` is null when unlimited.
+    used: int | None = None
+    remaining: int | None = None
 
 
 class EntitlementsResponse(BaseModel):

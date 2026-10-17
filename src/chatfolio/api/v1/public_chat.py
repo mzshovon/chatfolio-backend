@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Request, status
 from chatfolio.api.deps import (
     DbSessionDep,
     EmbedTextsDep,
+    GuardDep,
     LLMFactoryDep,
     SettingsDep,
     SmsServiceDep,
@@ -28,11 +29,12 @@ def _service(
     vector_store: VectorStoreDep,
     embed_texts: EmbedTextsDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
 ) -> ChatService:
     rag = RAGService(
         vector_store, embed_texts, llm_factory, get_settings().llm.retrieval_similarity_threshold
     )
-    return ChatService(session, rag)
+    return ChatService(session, rag, guard)
 
 
 @router.post("/{slug}/sessions", response_model=StartSessionResponse)
@@ -44,8 +46,9 @@ async def start_chat_session(
     vector_store: VectorStoreDep,
     embed_texts: EmbedTextsDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
 ) -> StartSessionResponse:
-    service = _service(session, vector_store, embed_texts, llm_factory)
+    service = _service(session, vector_store, embed_texts, llm_factory, guard)
     chat_session = await service.start_session(slug)
     return StartSessionResponse(session_id=chat_session.id)
 
@@ -60,10 +63,11 @@ async def send_chat_message(
     vector_store: VectorStoreDep,
     embed_texts: EmbedTextsDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
     sms_service: SmsServiceDep,
     background_tasks: BackgroundTasks,
 ) -> ChatMessageResponse:
-    reply = await _service(session, vector_store, embed_texts, llm_factory).send_message(
+    reply = await _service(session, vector_store, embed_texts, llm_factory, guard).send_message(
         session_id,
         payload.content,
         sms_service=sms_service,
@@ -85,6 +89,7 @@ async def request_meeting(
     payload: PublicMeetingRequest,
     session: DbSessionDep,
     settings: SettingsDep,
+    guard: GuardDep,
     sms_service: SmsServiceDep,
     background_tasks: BackgroundTasks,
 ) -> PublicMeetingResponse:
@@ -93,6 +98,7 @@ async def request_meeting(
         MeetingRepository(session),
         GoogleOAuthClient(settings.google_oauth),
         settings.security,
+        guard,
     )
     who = f" with {payload.attendee_name}" if payload.attendee_name else ""
     description = "Interview scheduled through Chatfolio."

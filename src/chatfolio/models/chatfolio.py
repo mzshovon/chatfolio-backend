@@ -42,3 +42,16 @@ class PortfolioVisit(UUIDPrimaryKeyMixin, Base):
     visited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+class ChatfolioLink(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """An extra public slug (alias) of the same chatfolio — the primary slug stays on
+    PublicChatfolio. Counted against the plan's `links_max` together with the primary."""
+
+    __tablename__ = "chatfolio_links"
+
+    chatfolio_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public_chatfolios.id", ondelete="CASCADE"), index=True
+    )
+    slug: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

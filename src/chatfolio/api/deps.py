@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends
@@ -13,6 +13,7 @@ from chatfolio.core.redis import get_redis
 from chatfolio.core.security import decode_access_token
 from chatfolio.db.session import get_db_session
 from chatfolio.entitlements.cache import EntitlementCache
+from chatfolio.entitlements.catalog import FeatureKey
 from chatfolio.llm.base import LLMFactory
 from chatfolio.llm.factory import LLMProviderFactory
 from chatfolio.llm.model_router import ModelRouter
@@ -20,9 +21,14 @@ from chatfolio.models.user import User, UserRole
 from chatfolio.notifications.base import EmailSender, SmsSender
 from chatfolio.notifications.sms_vendor import VendorSmsSender
 from chatfolio.notifications.smtp_email import SmtpEmailSender
+from chatfolio.repositories.profile_repository import ProfileRepository
 from chatfolio.repositories.user_repository import UserRepository
+from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.entitlement_service import EntitlementService
+from chatfolio.services.portfolio_service import PortfolioService, PublicPortfolioService
 from chatfolio.services.pricing_service import PricingService
+from chatfolio.services.profile_service import ProfileService
+from chatfolio.services.quota_service import QuotaService
 from chatfolio.services.sms_service import SmsService
 from chatfolio.storage.base import StorageBackend
 from chatfolio.storage.s3_storage import S3StorageBackend
@@ -51,6 +57,40 @@ def get_entitlement_service(
 
 
 EntitlementServiceDep = Annotated[EntitlementService, Depends(get_entitlement_service)]
+
+
+def get_quota_service(session: DbSessionDep) -> QuotaService:
+    return QuotaService(session, get_redis())
+
+
+QuotaServiceDep = Annotated[QuotaService, Depends(get_quota_service)]
+
+
+def get_entitlement_guard(
+    entitlements: EntitlementServiceDep, quota: QuotaServiceDep
+) -> EntitlementGuard:
+    return EntitlementGuard(entitlements, quota)
+
+
+GuardDep = Annotated[EntitlementGuard, Depends(get_entitlement_guard)]
+
+
+def get_portfolio_service(session: DbSessionDep, guard: GuardDep) -> PortfolioService:
+    return PortfolioService(session, ProfileService(ProfileRepository(session)), guard)
+
+
+PortfolioServiceDep = Annotated[PortfolioService, Depends(get_portfolio_service)]
+
+
+def get_public_portfolio_service(
+    session: DbSessionDep, guard: GuardDep
+) -> PublicPortfolioService:
+    return PublicPortfolioService(session, ProfileRepository(session), guard)
+
+
+PublicPortfolioServiceDep = Annotated[
+    PublicPortfolioService, Depends(get_public_portfolio_service)
+]
 
 
 def get_pricing_service(session: DbSessionDep, cache: EntitlementCacheDep) -> PricingService:
@@ -114,8 +154,10 @@ def get_model_router(
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 
 
-def get_llm_provider_factory(settings: SettingsDep, router: ModelRouterDep) -> LLMFactory:
-    return LLMProviderFactory(settings.llm, router)
+def get_llm_provider_factory(
+    settings: SettingsDep, router: ModelRouterDep, quota: QuotaServiceDep
+) -> LLMFactory:
+    return LLMProviderFactory(settings.llm, router, quota)
 
 
 LLMFactoryDep = Annotated[LLMFactory, Depends(get_llm_provider_factory)]
@@ -178,3 +220,16 @@ async def require_admin(user: CurrentUserDep) -> User:
 
 
 AdminUserDep = Annotated[User, Depends(require_admin)]
+
+
+def require_feature(feature: FeatureKey) -> Any:
+    """Route-level gate for on/off features: `dependencies=[require_feature(FeatureKey.X)]`.
+    Readable at the route, and the `__feature__` marker lets a test prove every gated route
+    carries one. Quotas are *not* enforced here — those need atomic consume/release around the
+    action itself, so they live in the services."""
+
+    async def _require(current_user: CurrentUserDep, guard: GuardDep) -> None:
+        await guard.require_feature(current_user.id, feature)
+
+    _require.__feature__ = feature  # type: ignore[attr-defined]
+    return Depends(_require)

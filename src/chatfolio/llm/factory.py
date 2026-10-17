@@ -1,4 +1,5 @@
 import uuid
+from typing import Protocol
 
 import structlog
 
@@ -32,14 +33,26 @@ _TASK_TIMEOUT_SECONDS: dict[LLMTask, float] = {
 _USER_ROUTED_TASKS = frozenset({LLMTask.CHAT, LLMTask.GENERATION})
 
 
+class UsageRecorder(Protocol):
+    async def record_model_usage(
+        self, user_id: uuid.UUID, model_label: str, tokens: int
+    ) -> None: ...
+
+
 class RoutedProvider:
     """Resolves the owner's model at call time (an async DB/cache lookup, which the synchronous
     `for_task` cannot do) and falls back to the system fallback model if the chosen provider
     errors or times out — a recruiter never sees a model-specific failure."""
 
     def __init__(
-        self, factory: "LLMProviderFactory", router: ModelRouter, task: LLMTask, owner_id: uuid.UUID
+        self,
+        factory: "LLMProviderFactory",
+        router: ModelRouter,
+        task: LLMTask,
+        owner_id: uuid.UUID,
+        usage: UsageRecorder | None = None,
     ) -> None:
+        self._usage = usage
         self._factory = factory
         self._router = router
         self._task = task
@@ -51,7 +64,11 @@ class RoutedProvider:
         resolved = await self._router.resolve(self._owner_id)
         try:
             provider = self._factory.build(resolved, self._task)
-            return await provider.complete(system=system, messages=messages, json_mode=json_mode)
+            completion = await provider.complete(
+                system=system, messages=messages, json_mode=json_mode
+            )
+            await self._record(resolved, completion)
+            return completion
         except Exception:
             if resolved.is_fallback:
                 raise
@@ -64,7 +81,22 @@ class RoutedProvider:
             )
             fallback = await self._router.fallback()
             provider = self._factory.build(fallback, self._task)
-            return await provider.complete(system=system, messages=messages, json_mode=json_mode)
+            completion = await provider.complete(
+                system=system, messages=messages, json_mode=json_mode
+            )
+            await self._record(fallback, completion)
+            return completion
+
+    async def _record(self, model: ResolvedModel, completion: LLMCompletion) -> None:
+        if self._usage is None:
+            return
+        try:
+            await self._usage.record_model_usage(
+                self._owner_id, f"{model.provider.value}/{model.model_id}", completion.tokens_used
+            )
+        except Exception:
+            # Cost reporting must never fail a recruiter's reply.
+            logger.warning("llm.usage_record_failed", exc_info=True)
 
 
 class LLMProviderFactory:
@@ -75,13 +107,19 @@ class LLMProviderFactory:
     task, the owner's model comes from the DB via the ModelRouter (see its docstring).
     """
 
-    def __init__(self, settings: LLMSettings, router: ModelRouter | None = None) -> None:
+    def __init__(
+        self,
+        settings: LLMSettings,
+        router: ModelRouter | None = None,
+        usage: UsageRecorder | None = None,
+    ) -> None:
         self._settings = settings
         self._router = router
+        self._usage = usage
 
     def for_task(self, task: LLMTask, *, owner_id: uuid.UUID | None = None) -> LLMProvider:
         if owner_id is not None and self._router is not None and task in _USER_ROUTED_TASKS:
-            return RoutedProvider(self, self._router, task, owner_id)
+            return RoutedProvider(self, self._router, task, owner_id, self._usage)
 
         provider_name = self._settings.provider_for(task)
         if provider_name == LLMProviderName.DEEPSEEK:

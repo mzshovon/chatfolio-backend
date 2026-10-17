@@ -2,7 +2,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from chatfolio.main import app
-
 from chatfolio.services.sms_service import SmsService, SmsTemplate, normalize_bd_mobile
 from tests.conftest import fake_sms_sender
 from tests.factories.fake_notifications import FakeSmsSender

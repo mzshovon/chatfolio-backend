@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -19,3 +20,20 @@ class PortfolioSettingsResponse(BaseModel):
     published_at: datetime | None
     contact_cta_config: dict[str, str]
     cv_downloadable: bool
+
+
+class AliasCreateRequest(BaseModel):
+    slug: str = Field(pattern=SLUG_PATTERN, min_length=3, max_length=63)
+
+
+class AliasUpdateRequest(BaseModel):
+    slug: str | None = Field(default=None, pattern=SLUG_PATTERN, min_length=3, max_length=63)
+    is_active: bool | None = None
+
+
+class AliasResponse(BaseModel):
+    id: uuid.UUID
+    slug: str
+    subdomain: str
+    is_active: bool
+    in_plan: bool

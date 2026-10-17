@@ -2,9 +2,16 @@ import structlog
 from fastapi import APIRouter, Query, Request, status
 from fastapi.responses import RedirectResponse
 
-from chatfolio.api.deps import CurrentUserDep, DbSessionDep, SettingsDep
+from chatfolio.api.deps import (
+    CurrentUserDep,
+    DbSessionDep,
+    GuardDep,
+    SettingsDep,
+    require_feature,
+)
 from chatfolio.core.exceptions import ChatfolioError
 from chatfolio.core.rate_limit import limiter
+from chatfolio.entitlements.catalog import FeatureKey
 from chatfolio.models.meeting import GoogleCalendarConnection
 from chatfolio.repositories.meeting_repository import MeetingRepository
 from chatfolio.schemas.meeting import (
@@ -20,12 +27,15 @@ router = APIRouter(prefix="/meeting-settings", tags=["meeting-settings"])
 logger = structlog.get_logger()
 
 
-def _service(session: DbSessionDep, settings: SettingsDep) -> MeetingSettingsService:
+def _service(
+    session: DbSessionDep, settings: SettingsDep, guard: GuardDep
+) -> MeetingSettingsService:
     return MeetingSettingsService(
         session,
         MeetingRepository(session),
         GoogleOAuthClient(settings.google_oauth),
         settings.security,
+        guard,
     )
 
 
@@ -50,9 +60,9 @@ def _to_response(
 
 @router.get("", response_model=MeetingSettingsResponse)
 async def get_meeting_settings(
-    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep
+    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep, guard: GuardDep
 ) -> MeetingSettingsResponse:
-    service = _service(session, settings)
+    service = _service(session, settings, guard)
     connection = await service.get_connection(current_user)
     access_token = (
         await service.get_valid_access_token(current_user) if connection is not None else None
@@ -60,11 +70,15 @@ async def get_meeting_settings(
     return _to_response(connection, access_token)
 
 
-@router.get("/google/connect", response_model=GoogleConnectResponse)
+@router.get(
+    "/google/connect",
+    response_model=GoogleConnectResponse,
+    dependencies=[require_feature(FeatureKey.CALENDAR_BOOKING)],
+)
 async def connect_google(
-    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep
+    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep, guard: GuardDep
 ) -> GoogleConnectResponse:
-    url = _service(session, settings).build_connect_url(current_user)
+    url = _service(session, settings, guard).build_connect_url(current_user)
     return GoogleConnectResponse(authorization_url=url)
 
 
@@ -74,6 +88,7 @@ async def google_callback(
     request: Request,
     session: DbSessionDep,
     settings: SettingsDep,
+    guard: GuardDep,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
@@ -89,7 +104,7 @@ async def google_callback(
         return RedirectResponse(f"{settings_path}?meeting_settings=google_error")
 
     try:
-        await _service(session, settings).handle_callback(state=state, code=code)
+        await _service(session, settings, guard).handle_callback(state=state, code=code)
     except ChatfolioError:
         logger.warning("meeting_settings.google_callback_failed", exc_info=True)
         return RedirectResponse(f"{settings_path}?meeting_settings=google_error")
@@ -99,12 +114,17 @@ async def google_callback(
 
 @router.delete("/google", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_google(
-    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep
+    current_user: CurrentUserDep, session: DbSessionDep, settings: SettingsDep, guard: GuardDep
 ) -> None:
-    await _service(session, settings).disconnect(current_user)
+    await _service(session, settings, guard).disconnect(current_user)
 
 
-@router.post("/meetings", response_model=MeetingResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/meetings",
+    response_model=MeetingResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require_feature(FeatureKey.CALENDAR_BOOKING)],
+)
 @limiter.limit("20/minute")
 async def schedule_meeting(
     request: Request,
@@ -112,5 +132,6 @@ async def schedule_meeting(
     current_user: CurrentUserDep,
     session: DbSessionDep,
     settings: SettingsDep,
+    guard: GuardDep,
 ) -> MeetingResponse:
-    return await _service(session, settings).schedule_meeting(current_user, body)
+    return await _service(session, settings, guard).schedule_meeting(current_user, body)

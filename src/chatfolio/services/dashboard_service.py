@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from chatfolio.core.exceptions import NotFoundError
+from chatfolio.entitlements.catalog import FeatureKey
 from chatfolio.models.chat import ChatMessage, ChatSession
 from chatfolio.models.chatfolio import PortfolioVisit
-from chatfolio.models.profile import DEFAULT_AI_TOKENS_MONTHLY_QUOTA
 from chatfolio.models.user import User
+from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.portfolio_service import PortfolioService
 from chatfolio.services.profile_service import ProfileService
 
@@ -43,36 +44,47 @@ class DashboardService:
         session: AsyncSession,
         portfolio_service: PortfolioService,
         profile_service: ProfileService,
+        guard: EntitlementGuard,
     ) -> None:
         self._session = session
         self._portfolio_service = portfolio_service
         self._profile_service = profile_service
+        self._guard = guard
 
     async def list_conversations(
         self, user: User, *, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0
     ) -> list[tuple[ChatSession, int]]:
         chatfolio = await self._portfolio_service.get_or_create_for_user(user)
-        result = await self._session.execute(
+        stmt = (
             select(ChatSession)
             .options(selectinload(ChatSession.recruiter_metadata))
             .where(ChatSession.chatfolio_id == chatfolio.id)
             .where(ChatSession.messages.any())
-            .order_by(ChatSession.started_at.desc())
-            .limit(limit)
-            .offset(offset)
+        )
+        # History window: older conversations are hidden, never deleted — they reappear on upgrade.
+        cutoff = await self._guard.history_cutoff(user.id)
+        if cutoff is not None:
+            stmt = stmt.where(ChatSession.started_at >= cutoff)
+        result = await self._session.execute(
+            stmt.order_by(ChatSession.started_at.desc()).limit(limit).offset(offset)
         )
         sessions = list(result.scalars().all())
         return await self._with_message_counts(sessions)
 
     async def get_conversation(self, user: User, session_id: uuid.UUID) -> ChatSession:
         chatfolio = await self._portfolio_service.get_or_create_for_user(user)
-        result = await self._session.execute(
+        stmt = (
             select(ChatSession)
             .options(
                 selectinload(ChatSession.recruiter_metadata), selectinload(ChatSession.messages)
             )
             .where(ChatSession.id == session_id, ChatSession.chatfolio_id == chatfolio.id)
         )
+        # Same window as the list: fetching by id must not be a way around it.
+        cutoff = await self._guard.history_cutoff(user.id)
+        if cutoff is not None:
+            stmt = stmt.where(ChatSession.started_at >= cutoff)
+        result = await self._session.execute(stmt)
         chat_session = result.scalar_one_or_none()
         if chat_session is None:
             raise NotFoundError("Conversation not found.")
@@ -86,7 +98,6 @@ class DashboardService:
 
     async def get_analytics(self, user: User) -> DashboardAnalytics:
         chatfolio = await self._portfolio_service.get_or_create_for_user(user)
-        profile = await self._profile_service.get_or_create_for_user(user)
 
         now = datetime.now(UTC)
         period_start = now - timedelta(days=ANALYTICS_WINDOW_DAYS)
@@ -108,9 +119,10 @@ class DashboardService:
         return DashboardAnalytics(
             portfolio_visitors_total=total,
             portfolio_visitors_delta_pct=delta_pct,
-            ai_tokens_used=profile.ai_tokens_used,
-            ai_tokens_monthly_quota=profile.usage_limits.get(
-                "ai_tokens_monthly_quota", DEFAULT_AI_TOKENS_MONTHLY_QUOTA
+            # This window's usage against the plan's budget (-1 = unlimited).
+            ai_tokens_used=await self._guard.used(user.id, FeatureKey.AI_TOKENS_LIMIT),
+            ai_tokens_monthly_quota=(await self._guard.get(user.id)).limit(
+                FeatureKey.AI_TOKENS_LIMIT
             ),
         )
 

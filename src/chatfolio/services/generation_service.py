@@ -4,6 +4,7 @@ import structlog
 
 from chatfolio.config.settings import LLMTask
 from chatfolio.core.exceptions import ServiceUnavailableError
+from chatfolio.entitlements.catalog import FeatureKey
 from chatfolio.llm.base import LLMCompletion, LLMFactory
 from chatfolio.llm.prompts.section_generation import SECTION_GENERATION_SYSTEM_PROMPTS
 from chatfolio.models.cv import CVStatus, UploadedCV
@@ -15,6 +16,7 @@ from chatfolio.models.portfolio_section import (
 )
 from chatfolio.models.profile import CandidateProfile, Education, Experience, Project, Skill
 from chatfolio.models.user import User
+from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.profile_service import ProfileService
 
 RAW_CV_CONTEXT_CHAR_LIMIT = 4000
@@ -23,9 +25,12 @@ logger = structlog.get_logger(__name__)
 
 
 class GenerationService:
-    def __init__(self, profile_service: ProfileService, llm_factory: LLMFactory) -> None:
+    def __init__(
+        self, profile_service: ProfileService, llm_factory: LLMFactory, guard: EntitlementGuard
+    ) -> None:
         self._profile_service = profile_service
         self._llm_factory = llm_factory
+        self._guard = guard
 
     async def list_sections(self, user: User) -> list[PortfolioSection]:
         existing = {
@@ -61,9 +66,12 @@ class GenerationService:
     ) -> PortfolioSection:
         profile = await self._profile_service.get_or_create_for_user(user)
         context = await self._build_context(user)
+        # Owner-facing, so a spent token budget is reported plainly (403 LIMIT_REACHED).
+        await self._guard.ensure_open(user.id, FeatureKey.AI_TOKENS_LIMIT)
         completion = await self._complete(section_type, context, user.id)
         content = completion.content.strip()
         profile.ai_tokens_used += completion.tokens_used
+        await self._guard.add_usage(user.id, FeatureKey.AI_TOKENS_LIMIT, completion.tokens_used)
 
         if existing is not None:
             return await self._profile_service.update_child(

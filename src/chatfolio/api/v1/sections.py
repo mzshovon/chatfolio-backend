@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 from chatfolio.api.deps import (
     CurrentUserDep,
     DbSessionDep,
+    GuardDep,
     JobQueueDep,
     LLMFactoryDep,
     VectorStoreDep,
@@ -21,15 +22,20 @@ router = APIRouter(prefix="/sections", tags=["sections"])
 SECTION_SOURCE_TYPE = "portfolio_section"
 
 
-def _service(session: DbSessionDep, llm_factory: LLMFactoryDep) -> GenerationService:
-    return GenerationService(ProfileService(ProfileRepository(session)), llm_factory)
+def _service(
+    session: DbSessionDep, llm_factory: LLMFactoryDep, guard: GuardDep
+) -> GenerationService:
+    return GenerationService(ProfileService(ProfileRepository(session)), llm_factory, guard)
 
 
 @router.get("", response_model=list[SectionResponse])
 async def list_sections(
-    current_user: CurrentUserDep, session: DbSessionDep, llm_factory: LLMFactoryDep
+    current_user: CurrentUserDep,
+    session: DbSessionDep,
+    llm_factory: LLMFactoryDep,
+    guard: GuardDep,
 ) -> list[SectionResponse]:
-    sections = await _service(session, llm_factory).list_sections(current_user)
+    sections = await _service(session, llm_factory, guard).list_sections(current_user)
     return [SectionResponse.model_validate(section) for section in sections]
 
 
@@ -40,10 +46,11 @@ async def update_section(
     current_user: CurrentUserDep,
     session: DbSessionDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
     vector_store: VectorStoreDep,
     job_queue: JobQueueDep,
 ) -> SectionResponse:
-    section = await _service(session, llm_factory).update_content(
+    section = await _service(session, llm_factory, guard).update_content(
         current_user, section_id, payload.content
     )
     # Manually edited content invalidates any embedding created for the previously-approved
@@ -62,10 +69,11 @@ async def regenerate_section(
     current_user: CurrentUserDep,
     session: DbSessionDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
     vector_store: VectorStoreDep,
     job_queue: JobQueueDep,
 ) -> SectionResponse:
-    section = await _service(session, llm_factory).regenerate(current_user, section_id)
+    section = await _service(session, llm_factory, guard).regenerate(current_user, section_id)
     await EmbeddingService(session, vector_store, job_queue).delete_embed(
         SECTION_SOURCE_TYPE, section.id
     )
@@ -78,10 +86,11 @@ async def approve_section(
     current_user: CurrentUserDep,
     session: DbSessionDep,
     llm_factory: LLMFactoryDep,
+    guard: GuardDep,
     vector_store: VectorStoreDep,
     job_queue: JobQueueDep,
 ) -> SectionResponse:
-    generation_service = _service(session, llm_factory)
+    generation_service = _service(session, llm_factory, guard)
     section = await generation_service.approve(current_user, section_id)
 
     profile = await ProfileService(ProfileRepository(session)).get_or_create_for_user(current_user)

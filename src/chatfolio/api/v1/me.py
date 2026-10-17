@@ -1,6 +1,12 @@
 from fastapi import APIRouter
 
-from chatfolio.api.deps import CurrentUserDep, EntitlementServiceDep, ModelRouterDep
+from chatfolio.api.deps import (
+    CurrentUserDep,
+    DbSessionDep,
+    EntitlementServiceDep,
+    GuardDep,
+    ModelRouterDep,
+)
 from chatfolio.entitlements.catalog import FEATURES, UNLIMITED
 from chatfolio.llm.model_router import ModelChoices
 from chatfolio.schemas.billing import (
@@ -11,28 +17,41 @@ from chatfolio.schemas.billing import (
     MyModelsResponse,
     PlanSummaryResponse,
 )
+from chatfolio.services.usage_report import usage_for
 
 router = APIRouter(prefix="/me", tags=["me"])
 
 
 @router.get("/entitlements", response_model=EntitlementsResponse)
 async def get_my_entitlements(
-    current_user: CurrentUserDep, service: EntitlementServiceDep
+    current_user: CurrentUserDep,
+    service: EntitlementServiceDep,
+    session: DbSessionDep,
+    guard: GuardDep,
 ) -> EntitlementsResponse:
     """What the signed-in user's plan grants. Drives UI locking only — the server enforces every
     limit itself, so a tampered client gains nothing."""
     entitlements = await service.get(current_user.id)
+    usage = await usage_for(session, guard, current_user.id, entitlements)
     features: dict[str, FeatureEntitlementResponse] = {}
     for definition in FEATURES:
         value = entitlements.values.get(definition.key.value)
         int_value = value.int_value if value else None
+        used = usage.get(definition.key.value)
+        unlimited = int_value == UNLIMITED
         features[definition.key.value] = FeatureEntitlementResponse(
             kind=definition.kind.value,
             value_type=definition.value_type.value,
             int_value=int_value,
             bool_value=value.bool_value if value else None,
-            unlimited=int_value == UNLIMITED,
+            unlimited=unlimited,
             period=value.period.value if value and value.period else None,
+            used=used,
+            remaining=(
+                max(int_value - used, 0)
+                if used is not None and int_value is not None and not unlimited
+                else None
+            ),
         )
     return EntitlementsResponse(
         plan=PlanSummaryResponse(slug=entitlements.plan_slug, name=entitlements.plan_name),

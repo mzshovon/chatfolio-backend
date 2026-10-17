@@ -26,6 +26,9 @@ class ConversationSummaryResponse(BaseModel):
     reviewed_by_candidate: bool
     message_count: int
     recruiter_metadata: RecruiterMetadataResponse | None
+    # True when the plan hides recruiter insights: `recruiter_metadata` is then always null, so
+    # the UI can show an upgrade prompt instead of an empty card.
+    recruiter_insights_locked: bool = False
 
 
 class ConversationDetailResponse(ConversationSummaryResponse):

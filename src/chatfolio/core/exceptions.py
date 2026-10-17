@@ -47,6 +47,22 @@ class FeatureNotInPlanError(ForbiddenError):
         super().__init__(message, feature=feature, upgrade_url="/pricing")
 
 
+class LimitReachedError(ForbiddenError):
+    code = "LIMIT_REACHED"
+    message = "You have reached the limit for this feature on your current plan."
+
+    def __init__(self, feature: str, limit: int, used: int) -> None:
+        super().__init__(feature=feature, limit=limit, used=used, upgrade_url="/pricing")
+
+
+class ChatUnavailableError(ForbiddenError):
+    """What a *recruiter* sees when the owner's plan can't take another chat. Deliberately says
+    nothing about plans, limits or upgrades — that is the owner's business, not the visitor's."""
+
+    code = "CHAT_UNAVAILABLE"
+    message = "This Chatfolio can't take new chats right now."
+
+
 class ModelNotAllowedError(ForbiddenError):
     code = "MODEL_NOT_ALLOWED"
     message = "Your current plan cannot use this model."
