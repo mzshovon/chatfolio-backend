@@ -238,26 +238,19 @@ class EntitlementOverride(UUIDPrimaryKeyMixin, Base):
 
 
 class LLMModel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """A selectable AI model. Metadata only — API keys stay in env/secret storage (LLMSettings),
-    never in this table. Exactly one active row is the fallback (DeepSeek by default): the model
-    free users get and what a failing/deactivated choice falls back to."""
+    """An extra model premium users may choose between. Metadata only — API keys stay in
+    env/secret storage (LLMSettings), never in this table. The system default/fallback model is
+    *not* here: it is configured through the environment (LLM_DEFAULT_PROVIDER and friends)."""
 
     __tablename__ = "llm_models"
     __table_args__ = (
         UniqueConstraint("provider", "model_id", name="uq_llm_models_provider_model"),
-        Index(
-            "uq_llm_models_single_fallback",
-            "is_fallback",
-            unique=True,
-            postgresql_where="is_fallback",
-        ),
     )
 
     provider: Mapped[LLMProviderName] = mapped_column(_enum(LLMProviderName))
     model_id: Mapped[str] = mapped_column(String(128))
     display_name: Mapped[str] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     supports_json_mode: Mapped[bool] = mapped_column(Boolean, default=True)
     # USD per 1M tokens, for cost reporting only.
     cost_in_per_1m: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), default=None)

@@ -583,6 +583,126 @@ a 0% change. `ai_tokens_used` is cumulative since signup, not reset monthly (see
 every candidate today — there's no plan/tier system that varies it yet. No pagination — a single
 point-in-time snapshot, same spirit as the admin metrics endpoint below.
 
+### 7.1 Plans, entitlements & model choice
+
+A plan decides which features and limits a candidate gets. The server enforces every limit itself
+(a blocked action returns an error); the endpoints below only exist so the UI can show locks,
+usage and upgrade prompts. Never trust client-side gating as the boundary.
+
+#### `GET /api/v1/pricing` — public, no `Authorization`
+```jsonc
+{ "plans": [{
+  "slug": "pro", "name": "Pro", "tagline": "For active job seekers", "is_free": false,
+  "price": { "amount_minor": 50000, "amount": "500", "currency": "BDT", "symbol": "৳" },
+  "duration": { "unit": "month", "count": 1, "label": "month" },
+  "badge_text": "Most popular", "cta_label": "Get Pro", "footnote": "",
+  "trial_days": 7, "purchase_url": "https://seller.example.com/pro",
+  "bullets": ["5 links", "Calendar booking"] }] }
+```
+Render the cards exactly as returned (`amount` is a ready-to-show string; do no currency maths).
+`duration.label` is `null` for lifetime/free plans. `purchase_url` is `null` until an admin sets
+one. Sends `ETag` + `Cache-Control: public, max-age=60`; send `If-None-Match` to get a bodyless
+`304`.
+
+#### `GET /api/v1/me/entitlements`
+```jsonc
+{ "plan": { "slug": "free", "name": "Free" },
+  "source": "free",                       // or "support_kori_license" | "trial" | "admin_grant"
+  "expires_at": null,                     // UTC ISO 8601
+  "features": {
+    "links_max": { "kind": "limit", "value_type": "int", "int_value": 3, "bool_value": null,
+                   "unlimited": false, "period": null, "used": 1, "remaining": 2 } } }
+```
+`features` is keyed by feature key. `used`/`remaining` are `null` for features that aren't
+countable (boolean gates, history days); `remaining` is also `null` when `unlimited` is `true`.
+
+#### `GET /api/v1/me/models`
+```jsonc
+{ "selection_enabled": true, "selected_model_id": null,
+  "effective_model_id": "uuid",           // what will actually answer right now
+  "models": [{ "id": "uuid", "provider": "deepseek", "model_id": "deepseek-chat",
+               "display_name": "DeepSeek Chat", "is_default": true,
+               "allowed": true, "locked_reason": null }] }
+```
+`locked_reason` is `null` when selectable, `"plan"` (upgrade needed) or `"unavailable"`
+(temporarily not offered).
+
+#### `PUT /api/v1/me/models/preference`
+```jsonc
+{ "model_id": "uuid" }                    // null clears the choice (back to the default model)
+// 200 OK — same shape as GET /me/models
+```
+
+#### `GET /api/v1/billing/strategies`
+How this user can get a plan right now:
+```jsonc
+{ "strategies": [{ "name": "support_kori_license", "label": "License key",
+                   "plans": [{ "slug": "pro", "name": "Pro", "purchase_url": "https://..." }] }],
+  "trials": [{ "plan_slug": "pro", "days": 7 }] }   // empty once used / not eligible
+```
+
+#### `GET /api/v1/billing/subscription`
+```jsonc
+{ "current": { "id": "uuid", "plan_slug": "pro", "plan_name": "Pro", "status": "active",
+               "source": "support_kori_license", "starts_at": "...", "expires_at": null },
+  "history": [ /* same shape, newest first */ ] }   // current is null on the free plan
+```
+
+#### `POST /api/v1/billing/activate` — 10/hour per IP
+```jsonc
+{ "license_key": "ABCD-1234-...", "plan_slug": "pro" }   // plan_slug optional if only one applies
+// 201 Created — same shape as GET /billing/subscription
+```
+The plan comes from the server's own mapping, never from what the client claims. Repeated wrong
+keys on one account are throttled separately from the per-IP limit.
+
+#### `POST /api/v1/billing/trial` — 5/hour per IP
+```jsonc
+{ "plan_slug": "pro" }
+// 201 Created — same shape as GET /billing/subscription
+```
+
+### 7.2 Meetings (Google Calendar)
+
+Connecting a calendar and booking require the `calendar_booking` feature on the user's plan; the
+connect and book calls fail for a plan without it.
+
+#### `GET /api/v1/meeting-settings`
+```jsonc
+{ "google_connected": true, "google_account_email": "ada@gmail.com",
+  "granted_scopes": ["https://www.googleapis.com/auth/calendar.events"],
+  "access_token_expires_at": "2026-09-19T11:00:00Z",
+  "access_token": "ya29..." }   // only when connected; refreshed on the fly, usable right now
+```
+When not connected: `google_connected: false`, other fields `null`/`[]`, no `access_token`.
+
+#### `GET /api/v1/meeting-settings/google/connect`
+`{ "authorization_url": "https://accounts.google.com/..." }` — navigate the whole window to it
+(`window.location.href`), don't `fetch` it. Google then redirects the browser back to
+`/dashboard/settings?meeting_settings=google_connected` (or `=google_error` on denial/failure);
+read that query param on load to show a toast. The callback itself is not an API call.
+
+#### `DELETE /api/v1/meeting-settings/google`
+`204 No Content`.
+
+#### `POST /api/v1/meeting-settings/meetings` — 20/min per IP
+```jsonc
+// Request
+{ "attendee_email": "recruiter@co.com", "additional_attendees": "hr@co.com, cto@co.com",
+  "start": "2026-09-19T17:00:00+06:00", "duration_minutes": 30, "timezone": "Asia/Dhaka",
+  "title": "Interview via Chatfolio", "description": "…", "request_id": "client-generated-key" }
+// 201 Created
+{ "event_id": "…", "status": "confirmed", "meet_link": "https://meet.google.com/…",
+  "calendar_link": "https://calendar.google.com/…", "title": "…",
+  "start": "…", "end": "…", "timezone": "Asia/Dhaka",
+  "attendee_email": "recruiter@co.com", "attendee_emails": ["recruiter@co.com", "hr@co.com"] }
+```
+`start` must carry a UTC offset (`422` otherwise); `timezone` must be an IANA name;
+`duration_minutes` 5-480 (default 30); `additional_attendees` is comma-separated, max 10, blanks and
+duplicates dropped. Resend the same `request_id` on a retry/double-click and no second Meet is
+created. `meet_link` can rarely be `null` while Google provisions it — the invite email still
+carries it.
+
 ---
 
 ## 8. Admin-only views
@@ -774,6 +894,133 @@ Silently removes this key from every role's `permissions` array that granted it,
 permission itself — matches the confirm dialog's existing copy ("will be removed from any roles
 that grant it"). Does not block on `used_by_roles_count > 0`.
 
+### 8.2 Pricing: plans, models, subscriptions, billing
+
+Powers the admin pricing screens. All `403` for a non-admin token. Unlike §8.1, these **do**
+change what users can do.
+
+#### `GET /api/v1/admin/features`
+Read-only, code-defined catalogue (each feature needs a backend enforcement hook, so none can be
+added here):
+```jsonc
+[{ "key": "links_max", "kind": "limit", "value_type": "int", "default_period": null,
+   "description": "…" }]
+```
+
+#### `GET /api/v1/admin/plans` · `GET /api/v1/admin/plans/{id}`
+```jsonc
+{ "id": "uuid", "slug": "pro", "name": "Pro", "tagline": "", "is_active": true,
+  "is_public": true, "is_default_free": false, "sort_order": 1,
+  "price_minor": 50000, "currency": "BDT", "duration_unit": "month", "duration_count": 1,
+  "external_product_ref": null, "trial_days": 7, "purchase_url": "https://…",
+  "allowed_strategies": ["support_kori_license"], "badge_text": null, "cta_label": "Get Pro",
+  "footnote": "", "marketing_bullets": ["{links_max} links"],
+  "features": { "links_max": { "int_value": 5, "bool_value": null, "period": null } },
+  "model_ids": ["uuid"], "active_subscribers": 12,
+  "created_at": "…", "updated_at": "…" }
+```
+`marketing_bullets` may embed a feature value with `{feature_key}` (plain key only, no format
+spec); at most 12 bullets of 1-200 chars.
+
+#### `POST /api/v1/admin/plans`
+```jsonc
+{ "slug": "pro-plus", "name": "Pro Plus", "price_minor": 90000, "currency": "BDT",
+  "duration_unit": "month", "duration_count": 1, "clone_from": "pro" }
+// 201 Created — full plan row
+```
+`slug` matches `^[a-z0-9][a-z0-9-]{1,62}$` and is **immutable**. `clone_from` (a slug) copies feature
+values and allowed models as a starting point. `duration_unit: "lifetime"` requires
+`duration_count: 0`; any other unit requires `>= 1`. `purchase_url` must be `https://`;
+`allowed_strategies` must be known strategy names. `422` on violations.
+
+#### `PATCH /api/v1/admin/plans/{id}` — every field optional
+Same fields as create except `slug` and `clone_from`. `200 OK` — full updated row.
+
+#### `DELETE /api/v1/admin/plans/{id}`
+`204 No Content`.
+
+#### `PUT /api/v1/admin/plans/{id}/features`
+```jsonc
+{ "features": { "links_max": { "int_value": 10 }, "calendar_booking": { "bool_value": true } } }
+// 200 OK — full plan row
+```
+Upsert for the listed keys only; omitted features keep their value. `int_value: -1` is unlimited.
+At least one key required.
+
+#### `PUT /api/v1/admin/plans/{id}/models`
+```jsonc
+{ "model_ids": ["uuid", "uuid"] }         // replaces the plan's allowed-model set
+// 200 OK — full plan row
+```
+
+#### `GET /api/v1/admin/models` · `POST` · `PATCH /{id}` · `DELETE /{id}`
+```jsonc
+// GET row
+{ "id": "uuid", "provider": "deepseek", "model_id": "deepseek-chat", "display_name": "DeepSeek Chat",
+  "is_active": true, "supports_json_mode": true, "cost_in_per_1m": "0.27", "cost_out_per_1m": "1.10",
+  "sort_order": 0, "provider_configured": true }
+// POST (201) — provider is one of deepseek | openai | gemini
+{ "provider": "openai", "model_id": "gpt-5", "display_name": "GPT-5", "is_active": true,
+  "supports_json_mode": true, "cost_in_per_1m": "1.25", "cost_out_per_1m": "10", "sort_order": 1 }
+// PATCH — display_name, is_active, supports_json_mode, cost_in_per_1m, cost_out_per_1m, sort_order
+```
+`provider_configured: false` means that provider's API key is missing on the server, so an active
+model of that provider can't actually serve requests — flag it in the UI. `DELETE` returns `204`.
+
+#### `GET /api/v1/admin/users/{user_id}/subscription`
+Same shape as `GET /billing/subscription` (§7.1).
+
+#### `POST /api/v1/admin/users/{user_id}/subscription`
+```jsonc
+{ "plan_slug": "pro", "expires_at": "2027-01-01T00:00:00Z", "reason": "Support goodwill" }
+// 201 Created — { current, history }
+```
+`reason` is required (3-500 chars). `expires_at` is optional (omitted = the plan's own duration)
+and must be in the future.
+
+#### `DELETE /api/v1/admin/users/{user_id}/subscription`
+`200 OK` with `{ current, history }`.
+
+#### `GET /api/v1/admin/users/{user_id}/overrides`
+```jsonc
+[{ "feature_key": "links_max", "int_value": 20, "bool_value": null, "expires_at": null,
+   "reason": "Beta tester", "granted_by": "uuid", "created_at": "…" }]
+```
+
+#### `PUT /api/v1/admin/users/{user_id}/overrides/{feature_key}`
+```jsonc
+{ "int_value": 20, "expires_at": null, "reason": "Beta tester" }   // reason required, 3-500 chars
+// 200 OK — the override row
+```
+A per-user exception layered over the plan. `DELETE` the same path returns `204`.
+
+#### `GET /api/v1/admin/billing/settings` · `PUT /api/v1/admin/billing/settings`
+```jsonc
+{ "enabled_strategies": ["support_kori_license"], "max_activation_delay_days": 30,
+  "available_strategies": ["support_kori_license", "trial"] }
+```
+`PUT` takes `enabled_strategies` and `max_activation_delay_days` (1-3650 or `null`).
+`available_strategies` is read-only: what exists in code and can be switched on.
+
+#### `GET /api/v1/admin/billing/orders?user_id=&limit=20&offset=0`
+```jsonc
+[{ "id": "uuid", "user_id": "uuid", "user_email": "ada@example.com", "plan_slug": "pro",
+   "strategy": "support_kori_license", "status": "paid", "amount_minor": 50000,
+   "currency": "BDT", "purchased_at": "…", "created_at": "…" }]
+```
+`limit` 1-100. `user_id` is an optional filter. Newest first.
+
+#### `GET /api/v1/admin/billing/licenses?user_id=&limit=20&offset=0`
+```jsonc
+[{ "id": "uuid", "user_id": "uuid", "user_email": "ada@example.com", "plan_slug": "pro",
+   "key_last4": "A1B2", "status": "active", "validated_at": "…", "last_revalidated_at": null }]
+```
+Full keys are never returned, only the last 4 characters for support lookups.
+
+#### `POST /api/v1/admin/billing/licenses/{id}/revoke`
+`204 No Content`. Ends the license and the subscription it created; the user returns to the free
+plan.
+
 ---
 
 ## 9. Custom domains — not live yet
@@ -803,6 +1050,9 @@ custom-domain redirect. Treat the whole feature as backend-scaffolding-only for 
 | `POST /auth/confirm-email-change` | 10/min per IP |
 | `POST /admin/users`, `PATCH /admin/users/{id}`, `DELETE /admin/users/{id}` | 20/min per IP |
 | `POST /cv/upload`, `POST /cv/{id}/retry` | 10/hour per IP |
+| `POST /billing/activate` | 10/hour per IP |
+| `POST /billing/trial` | 5/hour per IP |
+| `POST /meeting-settings/meetings` | 20/min per IP |
 | `POST /sections/{id}/regenerate` | 10/hour per IP |
 | Everything else under this doc | no explicit limit (still bounded by needing a valid token) |
 

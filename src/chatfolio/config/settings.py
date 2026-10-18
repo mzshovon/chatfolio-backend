@@ -94,7 +94,9 @@ class SecuritySettings(_Base):
     # unlike jwt_secret this must be reversible, since the backend has to present the plaintext
     # token back to Google later. Generate with `Fernet.generate_key()`; create_app() refuses to
     # start with this placeholder outside `local`, same guard as jwt_secret.
-    token_encryption_key: SecretStr = SecretStr("change-me-in-env-generate-with-fernet-generate-key")
+    token_encryption_key: SecretStr = SecretStr(
+        "change-me-in-env-generate-with-fernet-generate-key"
+    )
 
 
 class AppSettings(_Base):
@@ -158,9 +160,13 @@ class LLMSettings(_Base):
     deepseek_base_url: str = "https://api.deepseek.com"
     openai_base_url: str = "https://api.openai.com/v1"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    # Model used when a task is configured via env (LLM_DEFAULT_PROVIDER / LLM_PROVIDER_FOR_*) —
-    # i.e. INTENT, EXTRACTION and any caller without an owner. User-chosen models come from the DB.
-    deepseek_model: str = "deepseek-chat"
+    # Model used per provider when it is the env-selected one (LLM_DEFAULT_PROVIDER /
+    # LLM_PROVIDER_FOR_*): INTENT, EXTRACTION, callers without an owner — and the system default
+    # every user falls back to. User-chosen models (premium) come from the DB instead.
+    # No default for OpenAI/Gemini: model ids age quickly, so you set the one you want.
+    deepseek_model: str | None = "deepseek-chat"
+    openai_model: str | None = None
+    gemini_model: str | None = None
 
     # Empirically tuned, not guessed: local all-MiniLM-L6-v2 cosine similarity between a natural
     # recruiter question and a terse resume-style chunk ("Skill: PHP, category: ...") lands
@@ -191,6 +197,15 @@ class LLMSettings(_Base):
         }[provider]
         value = secret.get_secret_value() if secret is not None else ""
         return value or None
+
+    def model_for(self, provider: LLMProviderName) -> str | None:
+        """The configured model for an env-selected provider, or None if unset/blank."""
+        value = {
+            LLMProviderName.DEEPSEEK: self.deepseek_model,
+            LLMProviderName.OPENAI: self.openai_model,
+            LLMProviderName.GEMINI: self.gemini_model,
+        }.get(provider)
+        return value.strip() if value and value.strip() else None
 
     def base_url_for(self, provider: LLMProviderName) -> str | None:
         """The configured API root for providers that have an adapter, else None."""

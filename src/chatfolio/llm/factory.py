@@ -102,9 +102,10 @@ class RoutedProvider:
 class LLMProviderFactory:
     """Resolves a provider for a task.
 
-    Without an `owner_id` (or for non-user tasks) the env-configured provider is used — DeepSeek
-    only, matching the pilot's default per Requirement.md. With an `owner_id` on a user-routed
-    task, the owner's model comes from the DB via the ModelRouter (see its docstring).
+    Without an `owner_id` (or for non-user tasks) the env-configured provider is used
+    (DeepSeek, OpenAI or Gemini, per LLM_DEFAULT_PROVIDER / LLM_PROVIDER_FOR_*). With an
+    `owner_id` on a user-routed task, the owner's model comes from the ModelRouter, whose
+    default/fallback is that same env-configured provider.
     """
 
     def __init__(
@@ -121,17 +122,29 @@ class LLMProviderFactory:
         if owner_id is not None and self._router is not None and task in _USER_ROUTED_TASKS:
             return RoutedProvider(self, self._router, task, owner_id, self._usage)
 
-        provider_name = self._settings.provider_for(task)
-        if provider_name == LLMProviderName.DEEPSEEK:
-            api_key = self._require_key(provider_name)
-            return DeepSeekProvider(
-                api_key=api_key,
-                model=self._settings.deepseek_model,
-                base_url=self._settings.deepseek_base_url,
-                timeout=_TASK_TIMEOUT_SECONDS[task],
-            )
+        return self.for_provider(self._settings.provider_for(task), task)
 
-        raise NotImplementedError(f"LLM provider {provider_name!r} is not implemented yet.")
+    def for_provider(self, provider: LLMProviderName, task: LLMTask) -> LLMProvider:
+        """The env-configured provider (LLM_DEFAULT_PROVIDER, LLM_PROVIDER_FOR_*) with its
+        LLM_<PROVIDER>_MODEL, API key and base URL — nothing about it lives in code."""
+        base_url = self._settings.base_url_for(provider)
+        if base_url is None:
+            raise NotImplementedError(
+                f"LLM provider {provider.value!r} has no adapter yet "
+                "(supported: deepseek, openai, gemini)."
+            )
+        model = self._settings.model_for(provider)
+        if model is None:
+            raise RuntimeError(f"LLM_{provider.name}_MODEL is not configured.")
+        adapter = (
+            DeepSeekProvider if provider == LLMProviderName.DEEPSEEK else OpenAICompatibleProvider
+        )
+        return adapter(
+            api_key=self._require_key(provider),
+            model=model,
+            base_url=base_url,
+            timeout=_TASK_TIMEOUT_SECONDS[task],
+        )
 
     def build(self, model: ResolvedModel, task: LLMTask) -> LLMProvider:
         """A concrete provider for one DB model row."""

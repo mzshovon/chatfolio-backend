@@ -98,7 +98,7 @@ async def test_list_features_and_plans() -> None:
 
     premium = await _plan(client, headers, "premium")
     assert premium["features"]["links_max"]["int_value"] == 5
-    assert len(premium["model_ids"]) == 1  # the seeded DeepSeek fallback
+    assert premium["model_ids"] == []  # extra models are opt-in; the default comes from .env
     assert premium["active_subscribers"] == 0
 
 
@@ -122,7 +122,21 @@ async def test_create_plan_starts_closed_and_shows_on_pricing_page() -> None:
 
 async def test_clone_plan_copies_feature_values_and_models() -> None:
     client, headers = await _admin("ap-clone@example.com")
+    model = (
+        await client.post(
+            f"{PREFIX}/models",
+            headers=headers,
+            json={"provider": "openai", "model_id": "gpt-clone", "display_name": "Clone GPT"},
+        )
+    ).json()
+    source_plan = await _plan(client, headers, "premium")
+    await client.put(
+        f"{PREFIX}/plans/{source_plan['id']}/models",
+        headers=headers,
+        json={"model_ids": [model["id"]]},
+    )
     source = await _plan(client, headers, "premium")
+    assert source["model_ids"] == [model["id"]]
 
     response = await client.post(
         f"{PREFIX}/plans", headers=headers, json=_new_plan("premium-yearly", clone_from="premium")
@@ -300,12 +314,9 @@ async def test_feature_update_validation_and_period_handling() -> None:
 # ---------- models ----------
 
 
-async def test_models_crud_and_fallback_rules() -> None:
+async def test_models_crud_and_the_default_is_read_only_config() -> None:
     client, headers = await _admin("ap-models@example.com")
-    models = (await client.get(f"{PREFIX}/models", headers=headers)).json()
-    assert len(models) == 1
-    fallback = models[0]
-    assert fallback["provider"] == "deepseek" and fallback["is_fallback"] is True
+    assert (await client.get(f"{PREFIX}/models", headers=headers)).json() == []
 
     created = await client.post(
         f"{PREFIX}/models",
@@ -315,7 +326,7 @@ async def test_models_crud_and_fallback_rules() -> None:
     assert created.status_code == 201
     gpt = created.json()
     assert gpt["is_fallback"] is False
-    assert gpt["provider_configured"] in (True, False)  # depends on the server's env
+    assert gpt["provider_configured"] is False  # tests run with no API keys at all
 
     assert (
         await client.post(
@@ -332,44 +343,28 @@ async def test_models_crud_and_fallback_rules() -> None:
         )
     ).status_code == 422
 
-    # The fallback can be neither deactivated, deleted nor unset...
-    url = f"{PREFIX}/models/{fallback['id']}"
-    assert (await client.patch(url, headers=headers, json={"is_active": False})).status_code == 422
-    assert (
-        await client.patch(url, headers=headers, json={"is_fallback": False})
-    ).status_code == 422
-    assert (await client.delete(url, headers=headers)).status_code == 422
-
-    # ...but it can be *moved*, atomically (never zero or two fallbacks).
-    moved = await client.patch(
-        f"{PREFIX}/models/{gpt['id']}", headers=headers, json={"is_fallback": True}
+    url = f"{PREFIX}/models/{gpt['id']}"
+    updated = await client.patch(
+        url, headers=headers, json={"display_name": "GPT Renamed", "is_active": False}
     )
-    assert moved.status_code == 200
-    after = (await client.get(f"{PREFIX}/models", headers=headers)).json()
-    assert [m["display_name"] for m in after if m["is_fallback"]] == ["GPT Test"]
-    assert (await client.delete(url, headers=headers)).status_code == 204
+    assert updated.status_code == 200
+    assert updated.json()["display_name"] == "GPT Renamed" and updated.json()["is_active"] is False
 
-
-async def test_inactive_model_cannot_become_fallback() -> None:
-    client, headers = await _admin("ap-models-inactive@example.com")
-    model = (
+    # The fallback is configuration (.env), so it can't be set from the API...
+    attempt = await client.patch(url, headers=headers, json={"is_fallback": True})
+    assert attempt.json()["is_fallback"] is False
+    # ...a row only *reports* when it is the same model the env makes the default.
+    default_row = (
         await client.post(
             f"{PREFIX}/models",
             headers=headers,
-            json={
-                "provider": "gemini",
-                "model_id": "g-test",
-                "display_name": "G",
-                "is_active": False,
-            },
+            json={"provider": "deepseek", "model_id": "deepseek-chat", "display_name": "DS"},
         )
     ).json()
+    assert default_row["is_fallback"] is True
 
-    response = await client.patch(
-        f"{PREFIX}/models/{model['id']}", headers=headers, json={"is_fallback": True}
-    )
-
-    assert response.status_code == 422
+    assert (await client.delete(url, headers=headers)).status_code == 204
+    assert (await client.delete(url, headers=headers)).status_code == 404
 
 
 async def test_set_plan_models() -> None:

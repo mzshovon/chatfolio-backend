@@ -208,7 +208,8 @@ class LLMModelResponse(BaseModel):
     model_id: str
     display_name: str
     is_active: bool
-    is_fallback: bool
+    # Read-only: this row is the same model the .env configures as the system default.
+    is_fallback: bool = False
     supports_json_mode: bool
     cost_in_per_1m: Decimal | None
     cost_out_per_1m: Decimal | None
@@ -241,19 +242,10 @@ class LLMModelCreateRequest(BaseModel):
 class LLMModelUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     is_active: bool | None = None
-    # Only `true` is accepted: the fallback is *moved* to this model, never left empty.
-    is_fallback: bool | None = None
     supports_json_mode: bool | None = None
     cost_in_per_1m: Decimal | None = Field(default=None, ge=0)
     cost_out_per_1m: Decimal | None = Field(default=None, ge=0)
     sort_order: int | None = None
-
-    @field_validator("is_fallback")
-    @classmethod
-    def _only_true(cls, value: bool | None) -> bool | None:
-        if value is False:
-            raise ValueError("Set another model as the fallback instead of unsetting this one.")
-        return value
 
 
 # ---------- per-user subscription grants and overrides ----------

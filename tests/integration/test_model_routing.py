@@ -12,6 +12,7 @@ from sqlalchemy import select
 from chatfolio.api.deps import ModelRouterDep, SettingsDep, get_llm_provider_factory
 from chatfolio.api.deps import get_settings as deps_get_settings
 from chatfolio.config.settings import LLMProviderName, LLMSettings, LLMTask, Settings, get_settings
+from chatfolio.core.exceptions import ServiceUnavailableError
 from chatfolio.core.redis import get_redis
 from chatfolio.db.session import get_sessionmaker
 from chatfolio.entitlements.cache import EntitlementCache
@@ -81,6 +82,19 @@ async def _grant_premium(user_id: uuid.UUID, *, days: int | None = 180) -> None:
 
 async def _bump() -> None:
     await EntitlementCache(get_redis()).bump_catalog_version()
+
+
+def _env_llm(
+    default: LLMProviderName, *, models: dict[str, str] | None = None, **keys: str
+) -> LLMSettings:
+    """Settings as an operator would write them in .env: a default provider, its model, its key."""
+    base = _llm_settings(**keys)
+    return base.model_copy(
+        update={
+            "default_provider": default,
+            **{f"{name}_model": value for name, value in (models or {}).items()},
+        }
+    )
 
 
 def _llm_settings(**keys: str) -> LLMSettings:
@@ -507,3 +521,122 @@ async def test_base_urls_and_deepseek_model_come_from_settings(
     env_provider = LLMProviderFactory(settings).for_task(LLMTask.INTENT)
     assert isinstance(env_provider, DeepSeekProvider)
     assert env_provider._model == "deepseek-custom"
+
+
+# ---------- default / fallback come from the environment ----------
+
+
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "host"),
+    [
+        (LLMProviderName.OPENAI, "openai", "gpt-env", "api.openai.com"),
+        (LLMProviderName.GEMINI, "gemini", "gemini-env", "generativelanguage.googleapis.com"),
+        (LLMProviderName.DEEPSEEK, "deepseek", "ds-env", "api.deepseek.com"),
+    ],
+)
+def test_env_selected_provider_works_for_every_supported_provider(
+    provider: LLMProviderName, key_name: str, model: str, host: str
+) -> None:
+    settings = _env_llm(provider, models={key_name: model}, **{key_name: "k"})
+
+    adapter = LLMProviderFactory(settings).for_task(LLMTask.INTENT)
+
+    assert isinstance(adapter, OpenAICompatibleProvider)
+    assert adapter._model == model and host in adapter._base_url
+
+
+def test_env_selected_provider_fails_with_actionable_messages() -> None:
+    no_model = _env_llm(LLMProviderName.OPENAI, openai="k")
+    with pytest.raises(RuntimeError, match="LLM_OPENAI_MODEL is not configured"):
+        LLMProviderFactory(no_model).for_task(LLMTask.INTENT)
+
+    no_key = _env_llm(LLMProviderName.GEMINI, models={"gemini": "g"})
+    with pytest.raises(RuntimeError, match="No API key"):
+        LLMProviderFactory(no_key).for_task(LLMTask.INTENT)
+
+    unsupported = _env_llm(LLMProviderName.CLAUDE)
+    with pytest.raises(NotImplementedError, match="no adapter"):
+        LLMProviderFactory(unsupported).for_task(LLMTask.INTENT)
+
+
+async def test_per_task_env_override_picks_a_different_provider() -> None:
+    settings = _env_llm(
+        LLMProviderName.DEEPSEEK, models={"openai": "gpt-env"}, deepseek="d", openai="o"
+    ).model_copy(update={"provider_for_chat": LLMProviderName.OPENAI})
+
+    factory = LLMProviderFactory(settings)
+
+    assert factory.for_task(LLMTask.INTENT)._model == "deepseek-chat"  # type: ignore[attr-defined]
+    assert factory.for_task(LLMTask.CHAT)._model == "gpt-env"  # type: ignore[attr-defined]
+
+
+async def test_the_default_and_fallback_model_follow_the_env_provider() -> None:
+    client, headers = await authed_client("env-default@example.com")
+    user_id = await _user_id(client, headers)
+    settings = _env_llm(LLMProviderName.OPENAI, models={"openai": "gpt-env"}, openai="k")
+
+    async with get_sessionmaker()() as session:
+        router = ModelRouter(
+            session,
+            EntitlementService(session, EntitlementCache(get_redis())),
+            EntitlementCache(get_redis()),
+            settings,
+        )
+        resolved = await router.resolve(user_id)  # a free user: no choice at all
+        fallback = await router.fallback()
+
+    assert (resolved.provider, resolved.model_id, resolved.is_fallback) == (
+        LLMProviderName.OPENAI,
+        "gpt-env",
+        True,
+    )
+    assert fallback == resolved
+
+
+async def test_misconfigured_default_fails_loudly_instead_of_guessing() -> None:
+    client, headers = await authed_client("env-misconfig@example.com")
+    user_id = await _user_id(client, headers)
+    settings = _env_llm(LLMProviderName.OPENAI, openai="k")  # no LLM_OPENAI_MODEL
+
+    async with get_sessionmaker()() as session:
+        router = ModelRouter(
+            session,
+            EntitlementService(session, EntitlementCache(get_redis())),
+            EntitlementCache(get_redis()),
+            settings,
+        )
+        with pytest.raises(ServiceUnavailableError):
+            await router.resolve(user_id)
+
+
+async def test_a_failing_premium_choice_falls_back_to_the_env_default() -> None:
+    user_id, _ = await _premium_user_with_gpt("env-fallback@example.com")
+    settings = _env_llm(
+        LLMProviderName.GEMINI, models={"gemini": "gemini-env"}, gemini="k", openai="k"
+    )
+
+    async with get_sessionmaker()() as session:
+        cache = EntitlementCache(get_redis())
+        router = ModelRouter(session, EntitlementService(session, cache), cache, settings)
+        factory = _TestFactory(router, failing=frozenset({"gpt-test"}))
+        completion = await factory.for_task(LLMTask.CHAT, owner_id=user_id).complete(
+            system="s", messages=[]
+        )
+
+    assert completion.content == "reply from gemini-env"
+    assert factory.built == ["gpt-test", "gemini-env"]
+
+
+async def test_models_listing_leads_with_the_env_default_and_dedupes_its_db_twin(
+    openai_configured: None,
+) -> None:
+    client, headers = await authed_client("env-listing@example.com")
+    await _make_model(LLMProviderName.DEEPSEEK, "deepseek-chat", plans=("free", "premium"))
+    await _make_model()
+
+    listing = (await client.get("/api/v1/me/models", headers=headers)).json()
+
+    names = [m["model_id"] for m in listing["models"]]
+    assert names == ["deepseek-chat", "gpt-test"]  # the DB twin of the default isn't listed twice
+    assert listing["models"][0]["is_default"] and listing["models"][0]["allowed"]
+    assert listing["effective_model_id"] == listing["models"][0]["id"] == "default"

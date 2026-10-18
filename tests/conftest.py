@@ -8,6 +8,12 @@ import os
 os.environ["DATABASE_NAME"] = os.environ.get("TEST_DATABASE_NAME", "chatfolio_test")
 os.environ["STORAGE_BUCKET"] = os.environ.get("TEST_STORAGE_BUCKET", "chatfolio-cv-test")
 os.environ["REDIS_DB"] = os.environ.get("TEST_REDIS_DB", "1")
+# The developer's real .env may select another default provider and hold live API keys; tests must
+# neither depend on that nor ever be able to reach a real LLM. Env vars win over the .env file.
+os.environ["LLM_DEFAULT_PROVIDER"] = "deepseek"
+os.environ["LLM_DEEPSEEK_MODEL"] = "deepseek-chat"
+for _key in ("DEEPSEEK", "OPENAI", "GEMINI", "ANTHROPIC", "GROK", "OPENROUTER"):
+    os.environ[f"LLM_{_key}_API_KEY"] = ""
 
 from collections.abc import AsyncGenerator  # noqa: E402
 

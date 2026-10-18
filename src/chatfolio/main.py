@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -42,6 +43,23 @@ _DEFAULT_JWT_SECRET = "change-me-in-env-generate-a-real-random-secret-please"
 _DEFAULT_TOKEN_ENCRYPTION_KEY = "change-me-in-env-generate-with-fernet-generate-key"
 
 
+def _check_default_llm_configured() -> None:
+    """Surface a half-configured default LLM at boot instead of on the first recruiter message."""
+    llm = get_settings().llm
+    provider = llm.default_provider
+    problems = []
+    if llm.base_url_for(provider) is None:
+        problems.append("provider has no adapter")
+    if llm.model_for(provider) is None:
+        problems.append(f"LLM_{provider.value.upper()}_MODEL is not set")
+    if not llm.api_key_for(provider):
+        problems.append(f"LLM_{provider.value.upper()}_API_KEY is not set")
+    if problems:
+        structlog.get_logger(__name__).error(
+            "llm.default_not_configured", provider=provider.value, problems=problems
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Pre-warm the local embedding model before accepting traffic — it downloads an ~80MB ONNX
@@ -52,6 +70,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs under tests (httpx.ASGITransport doesn't trigger lifespan events), which is fine:
     # tests override get_embed_texts with a fake before any real embedder code would run.
     await asyncio.to_thread(embed_texts, ["warmup"])
+    _check_default_llm_configured()
     yield
 
 

@@ -17,8 +17,10 @@ authenticated candidate/admin app. Full backend design: [`BACKEND_PLAN.md`](./BA
 - No authentication on any endpoint in this document — don't send an `Authorization` header,
   there's nothing to send.
 - Errors always come back as `{"detail": "human-readable message"}` with a non-2xx status code.
-  There is no machine-readable error `code` field today — branch on HTTP status, not on the
-  message text (message text may change).
+  A few errors (plan/limit related, see the chat error table in §3) also carry a machine-readable
+  `code` next to `detail`, e.g. `{"detail": "...", "code": "CHAT_UNAVAILABLE"}`. Everywhere else
+  there is no `code` — branch on HTTP status (and `code` where documented), never on the message
+  text (message text may change).
 
 ---
 
@@ -85,7 +87,8 @@ Everything needed to render a candidate's public page in one call.
   ],
   "contact_cta_config": { "label": "Get in touch", "url": "mailto:ada@example.com" },
   "cv_downloadable": true,
-  "recruiter_count": 6
+  "recruiter_count": 6,
+  "show_badge": true                         // false when the owner's plan removes the badge
 }
 ```
 
@@ -99,6 +102,8 @@ Everything needed to render a candidate's public page in one call.
   best-effort and most sessions never populate it. Useful for a "N recruiters have reached out"
   social-proof stat, but don't present it as total page views or total chat sessions — it's a
   meaningfully smaller, more specific number than either.
+- `show_badge` controls the "made with Chatfolio" badge: render it when `true`, hide it when
+  `false`. It reflects the owner's plan and is always present (defaults to `true`).
 - Only **approved** content is ever returned here; there's no way to accidentally see a
   candidate's draft/unpublished edits through this endpoint.
 
@@ -192,6 +197,7 @@ messages, or a rare classifier failure — treat it as "no specific intent detec
 | Status | Cause | Suggested UI behavior |
 |---|---|---|
 | `404` | Unknown `session_id`, or the Chatfolio was unpublished mid-conversation | Show "this chat is no longer available"; don't offer retry, start a fresh session instead |
+| `403` (`code: "CHAT_UNAVAILABLE"`) | The candidate can't take this chat right now (their plan's allowance is used up). Body: `{"detail": "This Chatfolio can't take new chats right now.", "code": "CHAT_UNAVAILABLE"}` | Show the `detail` text as-is, stop sending from this session, and point to the contact CTA (`contact_email`). Don't retry, and don't say anything about plans or limits — the recruiter is never told why |
 | `422` | `content` empty or over 2000 chars | Client-side validation should prevent this; if it happens, show a field-level error |
 | `429` (session cooldown) | Same session sent another message within 2 seconds of the last one | Disable the send button for ~2s after each send — this is the expected UX, not an edge case to special-case in error handling |
 | `429` (rate limit) | More than 15 messages/min from this IP across all sessions | Show "you're sending messages too quickly, please slow down" |
@@ -298,6 +304,7 @@ on user sends message:
   on 429 (cooldown): just re-enable input once the 2s has elapsed, no error toast needed
   on 429 (rate limit) / 503: show an inline error, re-enable input immediately
   on 404: show "chat unavailable", offer to restart (re-run the session-start step)
+  on 403 with code CHAT_UNAVAILABLE: show the detail text, disable the input, show the contact CTA
 
 on "Request a meeting" submit (section 6):
   POST /public/chat/sessions/{session_id}/meetings with a fresh request_id
@@ -388,3 +395,34 @@ endpoint, so the picker can't hide busy times; the candidate sees conflicts on t
 typically from a "Request a meeting" button next to the input. Candidate-side connection setup is
 in section 8 of [`Required_API_Doc.md`](./Required_API_Doc.md); never show Google tokens, the
 connected account email or scopes in any recruiter view.
+
+---
+
+## 7. Pricing page
+
+### `GET /api/v1/pricing` — no auth
+
+The plan cards for the public pricing page, exactly as they should render. The same endpoint backs
+the in-app plan picker (see §7.1 of the companion
+[`ADMIN_PANEL_UI_REFERENCE.md`](./ADMIN_PANEL_UI_REFERENCE.md)).
+
+```jsonc
+// 200 OK
+{ "plans": [{
+  "slug": "pro", "name": "Pro", "tagline": "For active job seekers", "is_free": false,
+  "price": { "amount_minor": 50000, "amount": "500", "currency": "BDT", "symbol": "৳" },
+  "duration": { "unit": "month", "count": 1, "label": "month" },
+  "badge_text": "Most popular", "cta_label": "Get Pro", "footnote": "",
+  "trial_days": 7, "purchase_url": "https://seller.example.com/pro",
+  "bullets": ["5 links", "Calendar booking"] }] }
+```
+
+**Notes for the UI:**
+- Render `bullets`, `price.amount` + `price.symbol`, `badge_text`, `cta_label` and `footnote`
+  verbatim — the bullets are generated from the plan's real limits, so they can't drift from
+  what's enforced. Don't hard-code plan copy or do currency maths on `amount_minor`.
+- `duration.label` is `null` for lifetime and free plans — show just the price.
+- `purchase_url` is the seller's product page and is `null` until an admin sets it; fall back to
+  a sign-up link when it is. Only plans that are active and public are returned, already ordered.
+- Cached for 60 seconds with an `ETag`. Send `If-None-Match` to get a bodyless `304`; browsers do
+  this automatically.

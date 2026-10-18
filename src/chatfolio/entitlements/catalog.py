@@ -13,16 +13,13 @@ from enum import StrEnum
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatfolio.config.settings import LLMProviderName
 from chatfolio.models.billing import (
     DurationUnit,
     Feature,
     FeatureKind,
     FeatureValueType,
-    LLMModel,
     Plan,
     PlanFeature,
-    PlanModel,
     QuotaPeriod,
 )
 
@@ -249,22 +246,6 @@ def validate_feature_value(
     return None
 
 
-@dataclass(frozen=True)
-class ModelSeed:
-    provider: LLMProviderName
-    model_id: str
-    display_name: str
-    is_fallback: bool = False
-    sort_order: int = 0
-
-
-# Only the fallback is seeded: other providers need an API key and a deliberate admin decision
-# (and current model ids), so admins add them through the admin API.
-DEFAULT_MODELS: tuple[ModelSeed, ...] = (
-    ModelSeed(LLMProviderName.DEEPSEEK, "deepseek-chat", "DeepSeek", is_fallback=True),
-)
-
-
 async def ensure_catalog(session: AsyncSession) -> None:
     """Idempotent. Syncs `features` to FEATURES; creates default plans only when missing."""
     existing_features = {f.key: f for f in (await session.execute(select(Feature))).scalars()}
@@ -287,10 +268,7 @@ async def ensure_catalog(session: AsyncSession) -> None:
             row.description = definition.description
     await session.flush()
 
-    fallback = await _ensure_fallback_model(session)
-
     existing_slugs = set((await session.execute(select(Plan.slug))).scalars())
-    new_plans: list[Plan] = []
     for seed in DEFAULT_PLANS:
         if seed.slug in existing_slugs:
             continue
@@ -319,31 +297,4 @@ async def ensure_catalog(session: AsyncSession) -> None:
             ],
         )
         session.add(plan)
-        new_plans.append(plan)
     await session.flush()
-
-    # Only plans created *right now* get the fallback model: an existing plan may have been
-    # restricted by an admin on purpose and must never be touched here.
-    if fallback is not None:
-        for plan in new_plans:
-            session.add(PlanModel(plan_id=plan.id, model_id=fallback.id))
-        await session.flush()
-
-
-async def _ensure_fallback_model(session: AsyncSession) -> LLMModel | None:
-    """Seeds the default models on an empty table; returns the current fallback (if any)."""
-    if (await session.execute(select(LLMModel.id).limit(1))).first() is None:
-        for seed in DEFAULT_MODELS:
-            session.add(
-                LLMModel(
-                    provider=seed.provider,
-                    model_id=seed.model_id,
-                    display_name=seed.display_name,
-                    is_fallback=seed.is_fallback,
-                    sort_order=seed.sort_order,
-                )
-            )
-        await session.flush()
-    return (
-        await session.execute(select(LLMModel).where(LLMModel.is_fallback.is_(True)))
-    ).scalar_one_or_none()

@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ class ModelAdminService:
         return [self._to_response(row) for row in rows]
 
     async def create_model(self, admin: User, payload: LLMModelCreateRequest) -> LLMModelResponse:
-        model = LLMModel(**payload.model_dump(), is_fallback=False)
+        model = LLMModel(**payload.model_dump())
         self._session.add(model)
         try:
             await self._session.flush()
@@ -62,14 +62,6 @@ class ModelAdminService:
     ) -> LLMModelResponse:
         model = await self._model(model_id)
         updates = payload.model_dump(exclude_unset=True)
-        make_fallback = updates.pop("is_fallback", None) is True
-
-        if "is_active" in updates and updates["is_active"] is False and model.is_fallback:
-            raise ValidationFailedError(
-                "The fallback model cannot be deactivated; make another model the fallback first."
-            )
-        if make_fallback and updates.get("is_active", model.is_active) is False:
-            raise ValidationFailedError("An inactive model cannot be the fallback.")
         for field in ("display_name", "is_active", "supports_json_mode", "sort_order"):
             if field in updates and updates[field] is None:
                 raise ValidationFailedError(f"{field} cannot be null.")
@@ -81,16 +73,6 @@ class ModelAdminService:
                 changes[field] = {"from": _plain(old), "to": _plain(value)}
                 setattr(model, field, value)
 
-        if make_fallback and not model.is_fallback:
-            if not model.is_active:
-                raise ValidationFailedError("An inactive model cannot be the fallback.")
-            # Clear the old fallback first (and flush) so the one-fallback unique index holds.
-            await self._session.execute(
-                update(LLMModel).where(LLMModel.is_fallback.is_(True)).values(is_fallback=False)
-            )
-            model.is_fallback = True
-            changes["is_fallback"] = {"from": False, "to": True}
-
         if changes:
             await self._session.flush()
             await record_admin_action(
@@ -101,8 +83,6 @@ class ModelAdminService:
 
     async def delete_model(self, admin: User, model_id: uuid.UUID) -> None:
         model = await self._model(model_id)
-        if model.is_fallback:
-            raise ValidationFailedError("The fallback model cannot be deleted.")
         await record_admin_action(
             self._session,
             admin,
@@ -128,6 +108,12 @@ class ModelAdminService:
     def _to_response(self, model: LLMModel) -> LLMModelResponse:
         response = LLMModelResponse.model_validate(model)
         response.provider_configured = self._provider_configured(model.provider)
+        # Read-only: true when this row is the same model the env configures as the system
+        # default (LLM_DEFAULT_PROVIDER + LLM_<PROVIDER>_MODEL). The default itself is config.
+        response.is_fallback = (
+            model.provider == self._llm_settings.default_provider
+            and model.model_id == self._llm_settings.model_for(model.provider)
+        )
         return response
 
     def _provider_configured(self, provider: LLMProviderName) -> bool:

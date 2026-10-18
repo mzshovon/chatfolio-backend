@@ -20,6 +20,9 @@ from chatfolio.services.entitlement_service import EntitlementService
 
 logger = structlog.get_logger(__name__)
 
+# Id of the synthetic "system default" entry (it is configuration, not a DB row).
+DEFAULT_MODEL_ID = "default"
+
 
 @dataclass(frozen=True)
 class ResolvedModel:
@@ -50,9 +53,13 @@ class ModelChoices:
 class ModelRouter:
     """Decides which AI model answers for a given user — the one place that rule lives.
 
-    1. plan doesn't grant `model_selection`            -> the fallback model
+    1. plan doesn't grant `model_selection`            -> the default model
     2. user's choice is active, in the plan's set, and its provider has an API key -> that model
-    3. anything else (no choice, deactivated, removed from the plan, key missing)  -> the fallback
+    3. anything else (no choice, deactivated, removed from the plan, key missing)  -> the default
+
+    The default (and failure fallback) is the **env-configured** provider — LLM_DEFAULT_PROVIDER
+    with its LLM_<PROVIDER>_MODEL, API key and base URL — never a row in the database or a
+    constant in code. Only the *extra* models premium users may choose between live in the DB.
 
     Evaluated on every call from live data, so an admin change (deactivating a model, editing a
     plan) or an expired subscription takes effect immediately; the stored preference is never
@@ -72,16 +79,18 @@ class ModelRouter:
         self._llm_settings = llm_settings
 
     async def resolve(self, user_id: uuid.UUID) -> ResolvedModel:
-        catalog = await self._catalog()
-        fallback = _fallback(catalog)
+        default = self.default_model()
         entitlements = await self._entitlements.get(user_id)
         if not entitlements.enabled(FeatureKey.MODEL_SELECTION):
-            return fallback
+            return default
 
         preference = await self._session.get(UserModelPreference, user_id)
         if preference is None or preference.model_id is None:
-            return fallback
+            return default
+        catalog = await self._catalog()
         chosen = catalog["models"].get(str(preference.model_id))
+        if chosen is not None and self._is_default(chosen):
+            return default
         allowed = str(preference.model_id) in catalog["plans"].get(entitlements.plan_slug, [])
         if chosen is None or not allowed or not self._configured(chosen):
             logger.info(
@@ -89,11 +98,35 @@ class ModelRouter:
                 user_id=str(user_id),
                 model_id=str(preference.model_id),
             )
-            return fallback
+            return default
         return _to_resolved(chosen)
 
     async def fallback(self) -> ResolvedModel:
-        return _fallback(await self._catalog())
+        return self.default_model()
+
+    def default_model(self) -> ResolvedModel:
+        """The env-configured default/fallback model."""
+        provider = self._llm_settings.default_provider
+        model = self._llm_settings.model_for(provider)
+        if self._llm_settings.base_url_for(provider) is None or model is None:
+            # Misconfiguration (unsupported provider, or LLM_<PROVIDER>_MODEL unset): fail loudly
+            # rather than guess a model.
+            logger.error("llm.default_model_not_configured", provider=provider.value)
+            raise ServiceUnavailableError()
+        return ResolvedModel(
+            id=DEFAULT_MODEL_ID,
+            provider=provider,
+            model_id=model,
+            display_name=f"{provider.value} ({model})",
+            supports_json_mode=True,
+            is_fallback=True,
+        )
+
+    def _is_default(self, raw: dict[str, Any]) -> bool:
+        default = self.default_model()
+        return bool(
+            raw["provider"] == default.provider.value and raw["model_id"] == default.model_id
+        )
 
     async def choices_for(self, user_id: uuid.UUID) -> ModelChoices:
         catalog = await self._catalog()
@@ -101,9 +134,12 @@ class ModelRouter:
         enabled = entitlements.enabled(FeatureKey.MODEL_SELECTION)
         plan_models = set(catalog["plans"].get(entitlements.plan_slug, []))
 
-        choices = []
+        default = self.default_model()
+        choices = [ModelChoice(default, True, None)]  # always available to everyone
         for raw in catalog["models"].values():
-            in_plan = raw["id"] in plan_models or raw["is_fallback"]
+            if self._is_default(raw):
+                continue  # the same model is already the first entry
+            in_plan = raw["id"] in plan_models
             configured = self._configured(raw)
             reason = (
                 None if (in_plan and configured) else ("plan" if not in_plan else "unavailable")
@@ -179,7 +215,7 @@ class ModelRouter:
                         model_id=m.model_id,
                         display_name=m.display_name,
                         supports_json_mode=m.supports_json_mode,
-                        is_fallback=m.is_fallback,
+                        is_fallback=False,
                     )
                 )
                 | {"provider": m.provider.value, "sort_order": m.sort_order}
@@ -200,12 +236,3 @@ def _to_resolved(raw: dict[str, Any]) -> ResolvedModel:
         supports_json_mode=raw["supports_json_mode"],
         is_fallback=raw["is_fallback"],
     )
-
-
-def _fallback(catalog: dict[str, Any]) -> ResolvedModel:
-    for raw in catalog["models"].values():
-        if raw["is_fallback"]:
-            return _to_resolved(raw)
-    # No active fallback means the catalogue is broken; fail loudly rather than guess a model.
-    logger.error("llm.fallback_model_missing")
-    raise ServiceUnavailableError()
