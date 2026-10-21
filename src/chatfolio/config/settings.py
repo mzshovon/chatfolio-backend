@@ -67,6 +67,10 @@ class StorageSettings(_Base):
 
     provider: Literal["s3", "minio"] = "minio"
     endpoint_url: str | None = "http://localhost:9000"
+    # Browser-reachable endpoint used only to sign download links. Needed when the API reaches
+    # storage over an internal hostname (e.g. http://minio:9000 in docker compose) that the
+    # user's browser can't resolve. Falls back to `endpoint_url`.
+    public_endpoint_url: str | None = None
     bucket: str = "chatfolio-cv"
     region: str = "us-east-1"
     access_key: SecretStr = SecretStr("minioadmin")

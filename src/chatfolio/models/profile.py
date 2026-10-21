@@ -40,6 +40,11 @@ class CandidateProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     job_type: Mapped[JobType | None] = mapped_column(
         Enum(JobType, name="job_type"), default=None
     )
+    avatar_url: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # Days until the candidate can start; 0 means immediately.
+    notice_period_days: Mapped[int | None] = mapped_column(Integer, default=None)
+    # {"start": "10:00", "end": "23:00", "timezone": "Asia/Dhaka"}
+    work_hours: Mapped[dict[str, str] | None] = mapped_column(JSON, default=None)
     contact_email: Mapped[str | None] = mapped_column(String(255), default=None)
     phone: Mapped[str | None] = mapped_column(String(50), default=None)
     social_links: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

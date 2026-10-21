@@ -16,10 +16,13 @@ class S3StorageBackend:
         self._session = aioboto3.Session()
 
     @asynccontextmanager
-    async def _client(self) -> AsyncIterator[Any]:
+    async def _client(self, *, public: bool = False) -> AsyncIterator[Any]:
+        endpoint = self._settings.endpoint_url
+        if public and self._settings.public_endpoint_url:
+            endpoint = self._settings.public_endpoint_url
         async with self._session.client(
             "s3",
-            endpoint_url=self._settings.endpoint_url,
+            endpoint_url=endpoint,
             region_name=self._settings.region,
             aws_access_key_id=self._settings.access_key.get_secret_value(),
             aws_secret_access_key=self._settings.secret_key.get_secret_value(),
@@ -46,7 +49,7 @@ class S3StorageBackend:
             return body
 
     async def generate_download_url(self, key: str, expires_in: int = 3600) -> str:
-        async with self._client() as client:
+        async with self._client(public=True) as client:
             url: str = await client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self._settings.bucket, "Key": key},

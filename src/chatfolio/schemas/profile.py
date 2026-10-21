@@ -1,9 +1,26 @@
 import uuid
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from chatfolio.models.profile import JobType, ProfileStatus
+
+
+class WorkHours(BaseModel):
+    start: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: str
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo
+
+        try:
+            ZoneInfo(value)
+        except Exception as exc:
+            raise ValueError("Unknown IANA timezone.") from exc
+        return value
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -12,6 +29,9 @@ class ProfileUpdateRequest(BaseModel):
     bio: str | None = None
     location: str | None = None
     job_type: JobType | None = None
+    avatar_url: str | None = None
+    notice_period_days: int | None = Field(default=None, ge=0)
+    work_hours: WorkHours | None = None
     contact_email: EmailStr | None = None
     phone: str | None = None
     social_links: dict[str, str] | None = None
@@ -26,6 +46,9 @@ class ProfileResponse(BaseModel):
     bio: str | None
     location: str | None
     job_type: JobType | None
+    avatar_url: str | None
+    notice_period_days: int | None
+    work_hours: WorkHours | None
     contact_email: str | None
     phone: str | None
     social_links: dict[str, str]

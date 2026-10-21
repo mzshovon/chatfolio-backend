@@ -650,9 +650,13 @@ How this user can get a plan right now:
 
 #### `POST /api/v1/billing/activate` — 10/hour per IP
 ```jsonc
-{ "license_key": "ABCD-1234-...", "plan_slug": "pro" }   // plan_slug optional if only one applies
+{ "license_key": "ABCD-1234-...", "plan_slug": "pro" }
 // 201 Created — same shape as GET /billing/subscription
 ```
+`plan_slug` is the `slug` of one of the plan objects under `strategies[].plans[]` in
+`GET /billing/strategies` — send the slug of the plan the user picked (the one whose
+`purchase_url` they bought from); don't hard-code slugs. It's optional only when exactly one plan
+can be activated with a license; send it whenever the strategy lists more than one plan.
 The plan comes from the server's own mapping, never from what the client claims. Repeated wrong
 keys on one account are throttled separately from the per-IP limit.
 

@@ -6,6 +6,7 @@ from chatfolio.schemas.profile import (
     ExperienceResponse,
     ProjectResponse,
     SkillResponse,
+    WorkHours,
 )
 
 
@@ -35,3 +36,13 @@ class PortfolioSearchResult(BaseModel):
     slug: str
     full_name: str | None
     recruiter_count: int
+    title: str | None
+    location: str | None
+    avatar_url: str | None
+    headline: str | None  # <=140 chars, from the approved intro or summary
+    current_company: str | None
+    job_type: JobType | None
+    years_experience: float | None
+    notice_period_days: int | None  # 0 means immediately
+    top_skills: list[str]  # up to 5
+    work_hours: WorkHours | None

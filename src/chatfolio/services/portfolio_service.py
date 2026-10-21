@@ -1,8 +1,10 @@
 import re
 import secrets
 import uuid
-from datetime import UTC, datetime
-from typing import TypeVar
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from typing import Literal, TypeVar
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +22,7 @@ from chatfolio.models.profile import (
     Experience,
     JobType,
     ProfileStatus,
+    Skill,
 )
 from chatfolio.models.user import User
 from chatfolio.repositories.profile_repository import ProfileRepository
@@ -31,6 +34,61 @@ from chatfolio.services.profile_service import ProfileService
 SUBDOMAIN_SUFFIX = ".chatfolio.chat"
 
 ChildT = TypeVar("ChildT", bound=ProfileChildMixin)
+
+
+HEADLINE_MAX = 140
+TOP_SKILLS_MAX = 5
+SearchStart = Literal["immediately", "30"]
+SearchExp = Literal["0-2", "3-5", "6+"]
+
+
+@dataclass
+class SearchHit:
+    chatfolio: PublicChatfolio
+    profile: CandidateProfile
+    headline: str | None = None
+    current_company: str | None = None
+    years_experience: float | None = None
+    top_skills: list[str] = field(default_factory=list)
+
+
+def _make_headline(text: str | None) -> str | None:
+    if not text:
+        return None
+    flat = " ".join(text.split())
+    if not flat:
+        return None
+    if len(flat) <= HEADLINE_MAX:
+        return flat
+    return flat[: HEADLINE_MAX - 1].rstrip() + "…"
+
+
+def _window_minutes(hours: dict[str, str], day: date) -> tuple[float, float] | None:
+    """Candidate's working window on `day` as absolute UTC minute offsets (handles overnight)."""
+    try:
+        tz = ZoneInfo(hours["timezone"])
+        sh, sm = map(int, hours["start"].split(":"))
+        eh, em = map(int, hours["end"].split(":"))
+    except (KeyError, ValueError, Exception):
+        return None
+    start = datetime(day.year, day.month, day.day, sh, sm, tzinfo=tz)
+    end = datetime(day.year, day.month, day.day, eh, em, tzinfo=tz)
+    if end <= start:
+        end += timedelta(days=1)
+    return start.timestamp() / 60, end.timestamp() / 60
+
+
+def hours_overlap(a: dict[str, str] | None, b: dict[str, str] | None) -> bool:
+    if not a or not b:
+        return False
+    today = datetime.now(UTC).date()
+    # Compare across adjacent days so overnight windows in far timezones still meet.
+    for da in (-1, 0, 1):
+        wa = _window_minutes(a, today + timedelta(days=da))
+        wb = _window_minutes(b, today)
+        if wa and wb and min(wa[1], wb[1]) > max(wa[0], wb[0]):
+            return True
+    return False
 
 
 def slugify(value: str) -> str:
@@ -86,15 +144,24 @@ class PortfolioService:
         data = payload.model_dump(exclude_unset=True)
 
         new_slug = data.pop("slug", None)
-        if new_slug is not None and new_slug != chatfolio.slug:
+        renamed = new_slug is not None and new_slug != chatfolio.slug
+        if renamed:
             await self._ensure_slug_available(new_slug, exclude_id=chatfolio.id)
-            chatfolio.previous_slug = chatfolio.slug
-            chatfolio.slug = new_slug
+            # Every rename of the public slug spends one unit of the plan's `publishes_limit`
+            # (like a publish), so the cap can't be sidestepped by renaming a live page.
+            await self._guard.consume(user.id, FeatureKey.PUBLISHES_LIMIT)
 
-        for field, value in data.items():
-            setattr(chatfolio, field, value)
-
-        await self._session.flush()
+        try:
+            if renamed:
+                chatfolio.previous_slug = chatfolio.slug
+                chatfolio.slug = new_slug
+            for field, value in data.items():
+                setattr(chatfolio, field, value)
+            await self._session.flush()
+        except BaseException:
+            if renamed:
+                await self._guard.release(user.id, FeatureKey.PUBLISHES_LIMIT)
+            raise
         return chatfolio
 
     async def publish(self, user: User) -> PublicChatfolio:
@@ -305,16 +372,27 @@ class PublicPortfolioService:
     async def search_published(
         self,
         *,
+        q: str | None = None,
         username: str | None = None,
         location: str | None = None,
         job_type: JobType | None = None,
         field: str | None = None,
+        start: SearchStart | None = None,
+        exp: SearchExp | None = None,
+        overlap_hours: dict[str, str] | None = None,
         limit: int = 25,
-    ) -> list[tuple[PublicChatfolio, CandidateProfile]]:
+    ) -> list[SearchHit]:
         """Recruiter-facing search across published Chatfolios. Every filter is optional and
-        combines with the others (AND) — `username` matches the public slug, `field` matches the
-        candidate's title, any experience role or bio (e.g. "Software Engineer"), both case-insensitive partial matches.
-        Never touches unpublished/draft profiles, same guarantee as `get_published_by_slug`.
+        combines with the others (AND). Never touches unpublished/draft profiles.
+
+        - `q`: free text ("React developer remote"). Whitespace-separated terms are ANDed; each
+          must match the slug, name, title, bio, location, an experience role or a skill name
+          (case-insensitive). The words remote/hybrid/onsite match the work mode instead.
+        - `username`/`location`/`field`: legacy partial-match filters.
+        - `job_type`: Work filter. `start`: "immediately" (notice 0) or "30" (notice <= 30 days).
+        - `exp`: "0-2" / "3-5" / "6+" years, measured from the earliest experience start date.
+        - `overlap_hours`: viewer's {start, end, timezone}; keeps candidates whose working hours
+          overlap it.
         """
         stmt = (
             select(PublicChatfolio, CandidateProfile)
@@ -328,25 +406,121 @@ class PublicPortfolioService:
         if job_type:
             stmt = stmt.where(CandidateProfile.job_type == job_type)
         if field:
-            pattern = f"%{field.strip()}%"
-            # Title is often empty (e.g. profile built from a CV), so also match any
-            # experience role and the bio.
-            role_match = (
-                select(Experience.id)
-                .where(Experience.profile_id == CandidateProfile.id, Experience.role.ilike(pattern))
+            stmt = stmt.where(self._text_match(f"%{field.strip()}%", fields="role"))
+        for term in (q or "").split():
+            mode = {jt.value: jt for jt in JobType}.get(term.lower())
+            if mode is not None:
+                stmt = stmt.where(CandidateProfile.job_type == mode)
+            else:
+                stmt = stmt.where(self._text_match(f"%{term}%", fields="all"))
+
+        if start == "immediately":
+            stmt = stmt.where(CandidateProfile.notice_period_days == 0)
+        elif start == "30":
+            stmt = stmt.where(CandidateProfile.notice_period_days <= 30)
+
+        if exp:
+            earliest = (
+                select(func.min(Experience.start_date))
+                .where(Experience.profile_id == CandidateProfile.id)
+                .scalar_subquery()
+            )
+            today = datetime.now(UTC).date()
+
+            def ago(years: int) -> date:
+                return today - timedelta(days=round(365.25 * years))
+
+            if exp == "0-2":
+                stmt = stmt.where(earliest > ago(2))
+            elif exp == "3-5":
+                stmt = stmt.where(earliest <= ago(3), earliest > ago(6))
+            else:
+                stmt = stmt.where(earliest <= ago(6))
+
+        stmt = stmt.order_by(PublicChatfolio.published_at.desc())
+        if not overlap_hours:
+            stmt = stmt.limit(limit)
+        rows = [(row[0], row[1]) for row in (await self._session.execute(stmt)).all()]
+        if overlap_hours:
+            rows = [r for r in rows if hours_overlap(r[1].work_hours, overlap_hours)][:limit]
+        return await self._build_hits(rows)
+
+    @staticmethod
+    def _text_match(pattern: str, *, fields: Literal["all", "role"]):
+        role_match = (
+            select(Experience.id)
+            .where(Experience.profile_id == CandidateProfile.id, Experience.role.ilike(pattern))
+            .exists()
+        )
+        # Title is often empty (e.g. profile built from a CV), so also match any experience
+        # role and the bio.
+        clauses = [CandidateProfile.title.ilike(pattern), CandidateProfile.bio.ilike(pattern)]
+        clauses.append(role_match)
+        if fields == "all":
+            skill_match = (
+                select(Skill.id)
+                .where(Skill.profile_id == CandidateProfile.id, Skill.name.ilike(pattern))
                 .exists()
             )
-            stmt = stmt.where(
-                or_(
-                    CandidateProfile.title.ilike(pattern),
-                    CandidateProfile.bio.ilike(pattern),
-                    role_match,
-                )
+            clauses += [
+                skill_match,
+                PublicChatfolio.slug.ilike(pattern),
+                CandidateProfile.full_name.ilike(pattern),
+                CandidateProfile.location.ilike(pattern),
+            ]
+        return or_(*clauses)
+
+    async def _build_hits(
+        self, rows: list[tuple[PublicChatfolio, CandidateProfile]]
+    ) -> list[SearchHit]:
+        if not rows:
+            return []
+        profile_ids = [p.id for _, p in rows]
+        hits = {p.id: SearchHit(chatfolio=c, profile=p) for c, p in rows}
+
+        sections: dict[uuid.UUID, dict[SectionType, str]] = {}
+        result = await self._session.execute(
+            select(PortfolioSection).where(
+                PortfolioSection.profile_id.in_(profile_ids),
+                PortfolioSection.status == SectionStatus.APPROVED,
+                PortfolioSection.section_type.in_([SectionType.INTRO, SectionType.SUMMARY]),
+            )
+        )
+        for sec in result.scalars():
+            sections.setdefault(sec.profile_id, {})[sec.section_type] = sec.content
+        for pid, hit in hits.items():
+            by_type = sections.get(pid, {})
+            hit.headline = _make_headline(
+                by_type.get(SectionType.INTRO) or by_type.get(SectionType.SUMMARY)
             )
 
-        stmt = stmt.order_by(PublicChatfolio.published_at.desc()).limit(limit)
-        result = await self._session.execute(stmt)
-        return [(row[0], row[1]) for row in result.all()]
+        today = datetime.now(UTC).date()
+        result = await self._session.execute(
+            select(Experience)
+            .where(Experience.profile_id.in_(profile_ids))
+            .order_by(Experience.start_date.desc().nulls_last())
+        )
+        earliest: dict[uuid.UUID, date] = {}
+        for exp in result.scalars():
+            hit = hits[exp.profile_id]
+            if hit.current_company is None and exp.is_current:
+                hit.current_company = exp.company
+            if exp.start_date and (
+                exp.profile_id not in earliest or exp.start_date < earliest[exp.profile_id]
+            ):
+                earliest[exp.profile_id] = exp.start_date
+        for pid, first in earliest.items():
+            hits[pid].years_experience = round(max((today - first).days, 0) / 365.25, 1)
+
+        result = await self._session.execute(
+            select(Skill).where(Skill.profile_id.in_(profile_ids))
+        )
+        for skill in result.scalars():
+            names = hits[skill.profile_id].top_skills
+            if len(names) < TOP_SKILLS_MAX:
+                names.append(skill.name)
+
+        return [hits[p.id] for _, p in rows]
 
     async def list_approved_sections(self, profile_id: uuid.UUID) -> dict[SectionType, str]:
         result = await self._session.execute(

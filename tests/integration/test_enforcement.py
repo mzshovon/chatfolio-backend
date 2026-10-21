@@ -246,8 +246,8 @@ async def test_publish_actions_are_counted_and_unpublish_does_not_refund(
 ) -> None:
     owner, headers, owner_id, _ = await _published_owner(
         "enf-pub-owner@example.com", "enf-pub", set_fake_llm
-    )  # helper's publish = action #1
-    await set_override(owner_id, "publishes_limit", int_value=2)
+    )  # helper's slug rename = action #1, its publish = action #2
+    await set_override(owner_id, "publishes_limit", int_value=3)
 
     again = await owner.post("/api/v1/portfolio-settings/publish", headers=headers)
     assert again.status_code == 200  # already live: no state change, no unit
@@ -257,17 +257,44 @@ async def test_publish_actions_are_counted_and_unpublish_does_not_refund(
     ).status_code == 200
     assert (
         await owner.post("/api/v1/portfolio-settings/publish", headers=headers)
-    ).status_code == 200  # #2
+    ).status_code == 200  # #3
     await owner.post("/api/v1/portfolio-settings/unpublish", headers=headers)
-    blocked = await owner.post("/api/v1/portfolio-settings/publish", headers=headers)  # would be #3
+    blocked = await owner.post("/api/v1/portfolio-settings/publish", headers=headers)  # would be #4
 
     assert blocked.status_code == 403
     assert blocked.json()["code"] == "LIMIT_REACHED"
     assert blocked.json()["feature"] == "publishes_limit"
-    assert (blocked.json()["limit"], blocked.json()["used"]) == (2, 2)
+    assert (blocked.json()["limit"], blocked.json()["used"]) == (3, 3)
     # And the page really stayed unpublished.
     state = (await owner.get("/api/v1/portfolio-settings", headers=headers)).json()
     assert state["is_published"] is False
+
+
+async def test_renaming_the_slug_spends_the_publish_allowance() -> None:
+    client, headers = await authed_client("enf-rename@example.com")
+    uid = await user_id_of(client, headers)
+    await set_override(uid, "publishes_limit", int_value=2)
+
+    for slug in ("enf-rename-one", "enf-rename-two"):
+        response = await client.patch(
+            "/api/v1/portfolio-settings", json={"slug": slug}, headers=headers
+        )
+        assert response.status_code == 200
+
+    blocked = await client.patch(
+        "/api/v1/portfolio-settings", json={"slug": "enf-rename-three"}, headers=headers
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["feature"] == "publishes_limit"
+    # Non-slug edits and re-sending the current slug are free.
+    same = await client.patch(
+        "/api/v1/portfolio-settings",
+        json={"slug": "enf-rename-two", "cv_downloadable": True},
+        headers=headers,
+    )
+    assert same.status_code == 200
+    state = (await client.get("/api/v1/portfolio-settings", headers=headers)).json()
+    assert state["slug"] == "enf-rename-two"
 
 
 async def test_validation_failure_does_not_consume_a_publish() -> None:
@@ -594,8 +621,9 @@ async def test_entitlements_report_usage_and_remaining(set_fake_llm: Callable[[s
 
     assert features["recruiter_chats_limit"]["used"] == 1
     assert features["recruiter_chats_limit"]["remaining"] == 19  # free: 20 / month
+    # free: 3 lifetime = the helper's slug rename + its publish
     assert (
-        features["publishes_limit"]["used"] == 1 and features["publishes_limit"]["remaining"] == 2
+        features["publishes_limit"]["used"] == 2 and features["publishes_limit"]["remaining"] == 1
     )
     assert features["ai_tokens_limit"]["used"] == 100  # intent + chat, 50 each
     assert features["links_max"]["used"] == 1 and features["links_max"]["remaining"] == 0

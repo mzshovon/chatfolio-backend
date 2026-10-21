@@ -129,3 +129,53 @@ async def test_renaming_slug_redirects_from_old_slug(set_fake_llm: Callable[[str
 
     new_response = await client.get("/api/v1/public/chatfolio/ada-public-4-new")
     assert new_response.status_code == 200
+
+
+async def test_search_returns_card_fields_and_filters(
+    set_fake_llm: Callable[[str], None],
+) -> None:
+    client, headers, slug = await publish_full_profile(
+        "search-owner@example.com", set_fake_llm, "ada-search-1"
+    )
+    await client.patch(
+        "/api/v1/profiles/me",
+        headers=headers,
+        json={
+            "location": "Dhaka",
+            "job_type": "remote",
+            "avatar_url": "https://example.com/a.png",
+            "notice_period_days": 0,
+            "work_hours": {"start": "10:00", "end": "23:00", "timezone": "Asia/Dhaka"},
+        },
+    )
+    await client.post(
+        "/api/v1/profiles/me/skills", headers=headers, json={"name": "Python"}
+    )
+
+    response = await client.get(
+        "/api/v1/public/chatfolio/search", params={"q": "Python Dhaka remote"}
+    )
+    assert response.status_code == 200
+    card = next(c for c in response.json() if c["slug"] == slug)
+    assert card["title"] == "Backend Engineer"
+    assert card["location"] == "Dhaka"
+    assert card["avatar_url"] == "https://example.com/a.png"
+    assert card["headline"] == "Generated content."
+    assert card["current_company"] == "Acme"
+    assert card["job_type"] == "remote"
+    assert card["notice_period_days"] == 0
+    assert card["top_skills"] == ["Python"]
+    assert card["work_hours"]["timezone"] == "Asia/Dhaka"
+
+    def slugs(body: list[dict]) -> list[str]:
+        return [c["slug"] for c in body]
+
+    base = "/api/v1/public/chatfolio/search"
+    assert slug in slugs((await client.get(base, params={"work": "remote", "start": "immediately"})).json())
+    assert slug not in slugs((await client.get(base, params={"work": "onsite"})).json())
+    assert slug not in slugs((await client.get(base, params={"q": "golang"})).json())
+    overlap = {"overlap": "true", "my_start": "09:00", "my_end": "18:00", "my_timezone": "Asia/Dhaka"}
+    assert slug in slugs((await client.get(base, params=overlap)).json())
+    overlap["my_start"], overlap["my_end"] = "03:00", "05:00"
+    assert slug not in slugs((await client.get(base, params=overlap)).json())
+    assert (await client.get(base, params={"overlap": "true"})).status_code == 422

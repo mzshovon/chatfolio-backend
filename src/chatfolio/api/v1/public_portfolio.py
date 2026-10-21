@@ -1,8 +1,15 @@
+from typing import Literal
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
 
 from chatfolio.api.deps import PublicPortfolioServiceDep, StorageBackendDep
-from chatfolio.core.exceptions import NotFoundError, ServiceUnavailableError
+from chatfolio.core.exceptions import (
+    NotFoundError,
+    ServiceUnavailableError,
+    ValidationFailedError,
+)
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import SectionType
 from chatfolio.models.profile import (
@@ -60,23 +67,72 @@ async def _build_response(
 @router.get("/search", response_model=list[PortfolioSearchResult], tags=["public"])
 async def search_public_chatfolios(
     service: PublicPortfolioServiceDep,
+    q: str | None = Query(
+        default=None,
+        description="Free text, e.g. 'React developer remote' or 'Python Dhaka'. Terms are ANDed "
+        "across name, title, bio, location, roles and skills; remote/hybrid/onsite set the "
+        "work mode.",
+    ),
     username: str | None = Query(default=None, description="Partial match on the public slug."),
     location: str | None = Query(default=None, description="Partial match on candidate location."),
-    job_type: JobType | None = Query(default=None, description="Remote, onsite, or hybrid."),
+    job_type: JobType | None = Query(
+        default=None, alias="work", description="Work filter: remote, hybrid or onsite."
+    ),
     field: str | None = Query(
         default=None, description="Partial match on candidate title, e.g. 'Software Engineer'."
     ),
+    start: Literal["immediately", "30"] | None = Query(
+        default=None, description="Start filter: 'immediately' or '30' (<= 30 days notice)."
+    ),
+    exp: Literal["0-2", "3-5", "6+"] | None = Query(
+        default=None, description="Experience filter in years."
+    ),
+    overlap: bool = Query(
+        default=False, description="Only candidates whose work hours overlap the hours below."
+    ),
+    my_start: str | None = Query(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$"),
+    my_end: str | None = Query(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$"),
+    my_timezone: str | None = Query(default=None, description="IANA timezone, e.g. Asia/Dhaka."),
 ) -> list[PortfolioSearchResult]:
-    matches = await service.search_published(
-        username=username, location=location, job_type=job_type, field=field
+    overlap_hours = None
+    if overlap:
+        if not (my_start and my_end and my_timezone):
+            raise ValidationFailedError(
+                "overlap requires my_start, my_end and my_timezone."
+            )
+        try:
+            ZoneInfo(my_timezone)
+        except Exception as exc:
+            raise ValidationFailedError("my_timezone is not a valid IANA timezone.") from exc
+        overlap_hours = {"start": my_start, "end": my_end, "timezone": my_timezone}
+
+    hits = await service.search_published(
+        q=q,
+        username=username,
+        location=location,
+        job_type=job_type,
+        field=field,
+        start=start,
+        exp=exp,
+        overlap_hours=overlap_hours,
     )
     return [
         PortfolioSearchResult(
-            slug=chatfolio.slug,
-            full_name=profile.full_name,
-            recruiter_count=await service.count_identified_recruiters(chatfolio.id),
+            slug=hit.chatfolio.slug,
+            full_name=hit.profile.full_name,
+            recruiter_count=await service.count_identified_recruiters(hit.chatfolio.id),
+            title=hit.profile.title,
+            location=hit.profile.location,
+            avatar_url=hit.profile.avatar_url,
+            headline=hit.headline,
+            current_company=hit.current_company,
+            job_type=hit.profile.job_type,
+            years_experience=hit.years_experience,
+            notice_period_days=hit.profile.notice_period_days,
+            top_skills=hit.top_skills,
+            work_hours=hit.profile.work_hours,
         )
-        for chatfolio, profile in matches
+        for hit in hits
     ]
 
 
