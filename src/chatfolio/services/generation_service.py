@@ -19,7 +19,12 @@ from chatfolio.models.user import User
 from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.profile_service import ProfileService
 
-RAW_CV_CONTEXT_CHAR_LIMIT = 4000
+RAW_CV_CONTEXT_CHAR_LIMIT = 2000
+DESCRIPTION_CHAR_LIMIT = 150
+BIO_CHAR_LIMIT = 300
+MAX_EXPERIENCES = 4
+MAX_PROJECTS = 3
+MAX_SKILLS = 15
 
 logger = structlog.get_logger(__name__)
 
@@ -126,56 +131,64 @@ class GenerationService:
         if not experiences and not projects and not skills:
             raw_cv_text = await self._latest_parsed_cv_text(user)
             if raw_cv_text:
-                lines.append("Additional context from the candidate's uploaded CV (raw text):")
+                lines.append("CV text:")
                 lines.append(raw_cv_text[:RAW_CV_CONTEXT_CHAR_LIMIT])
 
-        return "\n".join(lines)
+        return "\n".join(lines) or "No profile data."
 
     @staticmethod
-    def _profile_summary_lines(profile: CandidateProfile) -> list[str]:
-        return [
-            f"Full name: {profile.full_name or 'unknown'}",
-            f"Title: {profile.title or 'unknown'}",
-            f"Bio: {profile.bio or 'none provided'}",
-            f"Location: {profile.location or 'unknown'}",
-            f"Preferred work mode: {profile.job_type.value if profile.job_type else 'unknown'}",
-        ]
+    def _clip(text: str | None, limit: int) -> str:
+        text = " ".join((text or "").split())
+        return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
-    @staticmethod
-    def _experience_lines(experiences: list[Experience]) -> list[str]:
+    @classmethod
+    def _profile_summary_lines(cls, profile: CandidateProfile) -> list[str]:
+        fields = {
+            "Name": profile.full_name,
+            "Title": profile.title,
+            "Bio": cls._clip(profile.bio, BIO_CHAR_LIMIT),
+        }
+        return [f"{label}: {value}" for label, value in fields.items() if value]
+
+    @classmethod
+    def _experience_lines(cls, experiences: list[Experience]) -> list[str]:
         if not experiences:
             return []
         lines = ["Experience:"]
-        for exp in experiences:
-            end = "present" if exp.is_current else (exp.end_date or "unknown end date")
-            period = f"{exp.start_date or '?'} to {end}"
-            lines.append(f"- {exp.role} at {exp.company} ({period}): {exp.description or ''}")
+        for exp in experiences[:MAX_EXPERIENCES]:
+            end = "present" if exp.is_current else exp.end_date or "?"
+            period = f"{exp.start_date or '?'}-{end}"
+            desc = cls._clip(exp.description, DESCRIPTION_CHAR_LIMIT)
+            lines.append(f"- {exp.role} @ {exp.company} ({period})" + (f": {desc}" if desc else ""))
         return lines
 
-    @staticmethod
-    def _project_lines(projects: list[Project]) -> list[str]:
+    @classmethod
+    def _project_lines(cls, projects: list[Project]) -> list[str]:
         if not projects:
             return []
         lines = ["Projects:"]
-        for project in projects:
+        for project in projects[:MAX_PROJECTS]:
+            desc = cls._clip(project.description, DESCRIPTION_CHAR_LIMIT)
             tech = ", ".join(project.tech_stack)
-            lines.append(f"- {project.title}: {project.description or ''} (tech: {tech})")
+            line = f"- {project.title}" + (f": {desc}" if desc else "")
+            lines.append(line + (f" [{tech}]" if tech else ""))
         return lines
 
     @staticmethod
     def _skill_lines(skills: list[Skill]) -> list[str]:
         if not skills:
             return []
-        return ["Skills: " + ", ".join(skill.name for skill in skills)]
+        return ["Skills: " + ", ".join(skill.name for skill in skills[:MAX_SKILLS])]
 
     @staticmethod
     def _education_lines(education: list[Education]) -> list[str]:
         if not education:
             return []
-        lines = ["Education:"]
+        entries = []
         for entry in education:
-            lines.append(f"- {entry.degree or ''} in {entry.field or ''} at {entry.institution}")
-        return lines
+            subject = " ".join(part for part in (entry.degree, entry.field) if part)
+            entries.append(f"{subject} @ {entry.institution}" if subject else entry.institution)
+        return ["Education: " + "; ".join(entries)]
 
     async def _latest_parsed_cv_text(self, user: User) -> str | None:
         cvs = await self._profile_service.list_children(user, UploadedCV)

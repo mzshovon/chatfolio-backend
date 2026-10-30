@@ -16,10 +16,11 @@ from chatfolio.llm.base import Message
 from chatfolio.models.chat import ChatMessage, ChatSession, MessageRole, RecruiterMetadata
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import PortfolioSection, SectionStatus, SectionType
-from chatfolio.models.profile import CandidateProfile
+from chatfolio.models.profile import CandidateProfile, Education, Experience, Project
 from chatfolio.models.user import User
 from chatfolio.services.chatfolio_resolver import ChatfolioResolver
 from chatfolio.services.entitlement_guard import EntitlementGuard
+from chatfolio.services.profile_context import ProfileContext, build_profile_context
 from chatfolio.services.rag_service import RAGService
 from chatfolio.services.sms_service import SmsService, SmsTemplate, resolve_candidate_mobile
 
@@ -151,6 +152,7 @@ class ChatService:
 
         sections = await self._approved_sections(profile.id)
         retrieved = await self._rag.retrieve(profile.id, content)
+        profile_context = await self._profile_context(profile.id, content)
         reply_text, reply_tokens = await self._rag.generate_reply(
             session_id=chat_session.id,
             full_name=profile.full_name,
@@ -159,6 +161,8 @@ class ChatService:
             location=profile.location,
             job_type=profile.job_type.value if profile.job_type else None,
             retrieved=retrieved,
+            overview=profile_context.overview,
+            pinned=profile_context.pinned,
             history=history,
             user_message=content,
             intent=intent,
@@ -234,6 +238,27 @@ class ChatService:
         recent = list(reversed(result.scalars().all()))
         role_map = {MessageRole.RECRUITER: "user", MessageRole.ASSISTANT: "assistant"}
         return [{"role": role_map[m.role], "content": m.content} for m in recent]
+
+    async def _profile_context(self, profile_id: uuid.UUID, message: str) -> ProfileContext:
+        experiences = await self._session.execute(
+            select(Experience)
+            .where(Experience.profile_id == profile_id)
+            .order_by(Experience.start_date.desc().nulls_last())
+        )
+        projects = await self._session.execute(
+            select(Project).where(Project.profile_id == profile_id)
+        )
+        education = await self._session.execute(
+            select(Education)
+            .where(Education.profile_id == profile_id)
+            .order_by(Education.start_date.desc().nulls_last())
+        )
+        return build_profile_context(
+            message,
+            list(experiences.scalars().all()),
+            list(projects.scalars().all()),
+            list(education.scalars().all()),
+        )
 
     async def _approved_sections(self, profile_id: uuid.UUID) -> dict[SectionType, str]:
         result = await self._session.execute(

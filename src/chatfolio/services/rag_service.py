@@ -102,15 +102,18 @@ class RAGService:
         location: str | None,
         job_type: str | None,
         retrieved: list[QueryMatch],
-        history: list[Message],
+        overview: str = "",
+        pinned: list[str] | None = None,
+        history: list[Message] | None = None,
         user_message: str,
         intent: RecruiterIntent,
         owner_id: uuid.UUID | None = None,
     ) -> tuple[str, int]:
-        if intent in INFORMATIONAL_INTENTS and not retrieved:
+        pinned = pinned or []
+        if intent in INFORMATIONAL_INTENTS and not retrieved and not pinned:
             return random.choice(CHAT_FALLBACK_RESPONSES), 0
 
-        if not retrieved:
+        if not retrieved and not pinned:
             logger.warning(
                 "chat.ungrounded_response", session_id=str(session_id), intent=intent.value
             )
@@ -127,6 +130,11 @@ class RAGService:
             f"Preferred work mode: {job_type or 'not specified by the candidate'}."
         )
         context_parts.append(f"Location: {location or 'not specified by the candidate'}.")
+        # Complete list of employers/projects/schools, straight from the database. Retrieval only
+        # surfaces a few chunks per turn, so without this the model can't tell "not retrieved"
+        # from "not on the profile" and wrongly claims a listed employer was never added.
+        if overview:
+            context_parts.append(overview)
         # Contact details (email/phone) are never put in the model's context, even for a
         # confirmed contact request — a raw digit/address string being generated back out through
         # the LLM is how it ends up retyped, reformatted, or partially masked (e.g. "***" in a
@@ -146,7 +154,11 @@ class RAGService:
         # docstring, is what makes the anti-repetition instruction in CHAT_SYSTEM_PROMPT_TEMPLATE
         # reliable rather than a request the model has to fight its own context to follow.
         if intent in INFORMATIONAL_INTENTS:
-            context_parts.extend(match["document"] for match in retrieved)
+            # Records the recruiter named outright go first; skip any retrieval duplicate.
+            context_parts.extend(pinned)
+            context_parts.extend(
+                match["document"] for match in retrieved if match["document"] not in pinned
+            )
         context = "\n".join(context_parts) or "No profile information is available yet."
 
         system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
@@ -156,7 +168,8 @@ class RAGService:
         try:
             provider = self._llm_factory.for_task(LLMTask.CHAT, owner_id=owner_id)
             completion = await provider.complete(
-                system=system, messages=[*history, {"role": "user", "content": user_message}]
+                system=system,
+                messages=[*(history or []), {"role": "user", "content": user_message}],
             )
         except Exception as exc:
             logger.exception("chat.generation_failed", session_id=str(session_id))
