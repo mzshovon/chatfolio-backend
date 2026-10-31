@@ -268,6 +268,23 @@ class SupportKoriSettings(_Base):
     max_failed_attempts_per_hour: int = 10
 
 
+class GeoIPSettings(_Base):
+    """Resolves a visitor's IP to "City, Country (GMT+x)" for GET /public/viewer/location."""
+
+    model_config = SettingsConfigDict(env_prefix="GEOIP_", env_file=".env", extra="ignore")
+
+    enabled: bool = True
+    # `{ip}` is substituted. The default (ipwho.is: free, HTTPS, no key) is the shape
+    # services/geolocation_service.py parses; another provider needs its parser adapted.
+    lookup_url: str = "https://ipwho.is/{ip}"
+    timeout_seconds: float = 3.0
+    # An IP's location barely changes; caching also keeps us well inside the provider's free tier.
+    cache_ttl_seconds: int = 24 * 60 * 60
+    # Honour X-Forwarded-For for the visitor's IP. Enable ONLY behind a reverse proxy/CDN that
+    # sets or overwrites that header — otherwise any client can spoof its own location.
+    trust_proxy_headers: bool = False
+
+
 class FeatureFlags(_Base):
     model_config = SettingsConfigDict(env_prefix="FEATURE_", env_file=".env", extra="ignore")
 
@@ -301,6 +318,7 @@ class Settings(_Base):
     email: EmailSettings = EmailSettings()
     sms: SmsSettings = SmsSettings()
     support_kori: SupportKoriSettings = SupportKoriSettings()
+    geoip: GeoIPSettings = GeoIPSettings()
 
 
 @lru_cache

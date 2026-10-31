@@ -30,6 +30,7 @@ from chatfolio.api.v1.pricing import router as pricing_router
 from chatfolio.api.v1.profiles import router as profiles_router
 from chatfolio.api.v1.public_chat import router as public_chat_router
 from chatfolio.api.v1.public_portfolio import router as public_portfolio_router
+from chatfolio.api.v1.public_viewer import router as public_viewer_router
 from chatfolio.api.v1.sections import router as sections_router
 from chatfolio.config.logging import configure_logging
 from chatfolio.config.observability import configure_metrics, configure_sentry
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(custom_domains_router, prefix="/api/v1")
     app.include_router(public_portfolio_router, prefix="/api/v1")
     app.include_router(public_chat_router, prefix="/api/v1")
+    app.include_router(public_viewer_router, prefix="/api/v1")
     app.include_router(feedback_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
     app.include_router(meeting_settings_router, prefix="/api/v1")

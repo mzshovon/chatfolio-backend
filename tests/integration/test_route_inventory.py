@@ -92,6 +92,7 @@ UNGATED: set[Op] = {
     ("GET", "/api/v1/profiles/me"),
     ("PATCH", "/api/v1/profiles/me"),
     ("GET", "/api/v1/public/chatfolio/search"),
+    ("GET", "/api/v1/public/viewer/location"),  # IP -> city/timezone label; plan-independent
     ("POST", "/api/v1/public/feedback"),
     ("PATCH", "/api/v1/sections/{section_id}"),  # manual edit: no AI involved
     ("POST", "/api/v1/sections/{section_id}/approve"),

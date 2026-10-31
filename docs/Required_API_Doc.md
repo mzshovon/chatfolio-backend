@@ -517,6 +517,48 @@ user; reconnecting overwrites it). Run `alembic upgrade head` to create it.
 
 ---
 
+## 9. Public — Viewer location (implemented 2026-10-31)
+
+### `GET /api/v1/public/viewer/location` — no auth required, 60/min per IP
+
+Resolves the caller's IP to a city/country/timezone for the search portal's location
+label. The browser just calls it; the backend reads the IP off the request.
+
+```json
+{
+  "city": "Dhaka",
+  "country": "Bangladesh",
+  "country_code": "BD",
+  "timezone": "Asia/Dhaka",
+  "utc_offset": "GMT+6",
+  "display": "Dhaka, Bangladesh (GMT+6)"
+}
+```
+
+- Always `200`. When the location can't be determined (localhost/private IP, lookup
+  disabled, provider down) every field is `null` — hide the label.
+- `utc_offset` is computed from `timezone` for *now*, so it tracks DST (`GMT+5:30`,
+  `GMT-3:30` for half-hour zones). `timezone` can be fed straight into the search's
+  `my_timezone` param.
+- Sent with `Cache-Control: private, max-age=300`.
+- Locally you will get nulls (your IP is `127.0.0.1`/a docker address). To test, set
+  `GEOIP_TRUST_PROXY_HEADERS=true` and send `X-Forwarded-For: <a public IP>`.
+
+### Backend configuration
+
+| Env var | Default | Notes |
+|---|---|---|
+| `GEOIP_ENABLED` | `true` | `false` makes the endpoint return all-null without any outbound call. |
+| `GEOIP_LOOKUP_URL` | `https://ipwho.is/{ip}` | Free, HTTPS, no key. Another provider needs its parser adapted in `geolocation_service.py`. |
+| `GEOIP_TIMEOUT_SECONDS` | `3` | |
+| `GEOIP_CACHE_TTL_SECONDS` | `86400` | Per-IP results are cached in Redis. |
+| `GEOIP_TRUST_PROXY_HEADERS` | `false` | **Set `true` in production behind a reverse proxy/CDN** (nginx, Cloudflare…) that sets `X-Forwarded-For`; otherwise every visitor resolves to the proxy's IP. Never enable without such a proxy — clients could spoof their location. |
+
+Privacy: the visitor's IP is sent to the lookup provider; it is not stored in our DB
+(only the resulting location is cached in Redis, keyed by IP, for the TTL).
+
+---
+
 ## Summary table
 
 | Section | Endpoint(s) needed | Paginated? | Frontend file |
@@ -529,3 +571,4 @@ user; reconnecting overwrites it). Run `alembic upgrade head` to create it.
 | Admin platform analytics | `GET /admin/metrics` (extended) or `GET /admin/analytics` | No | `src/app/admin/page.tsx` |
 | Recruiter portfolio search — **done** | `GET /public/chatfolio/search`, `job_type` on `PATCH /profiles/me` | Capped at 25, no `limit`/`offset` yet | net-new recruiter search UI |
 | Google Calendar connection — **done** | `GET /meeting-settings`, `GET /meeting-settings/google/connect`, `DELETE /meeting-settings/google`, `POST /meeting-settings/meetings` (callback is browser-redirect only) | No | `/dashboard/settings` Google Calendar card |
+| Viewer location — **done** | `GET /public/viewer/location` | No | search portal location label |

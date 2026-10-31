@@ -29,6 +29,7 @@ from chatfolio.services.billing_service import BillingService
 from chatfolio.services.billing_settings_service import BillingSettingsService
 from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.entitlement_service import EntitlementService
+from chatfolio.services.geolocation_service import GeoLocationService
 from chatfolio.services.portfolio_service import PortfolioService, PublicPortfolioService
 from chatfolio.services.pricing_service import PricingService
 from chatfolio.services.profile_service import ProfileService
@@ -272,3 +273,10 @@ def require_feature(feature: FeatureKey) -> Any:
 
     _require.__feature__ = feature  # type: ignore[attr-defined]
     return Depends(_require)
+
+
+def get_geolocation_service(settings: SettingsDep) -> GeoLocationService:
+    return GeoLocationService(settings.geoip, get_redis())
+
+
+GeoLocationServiceDep = Annotated[GeoLocationService, Depends(get_geolocation_service)]
