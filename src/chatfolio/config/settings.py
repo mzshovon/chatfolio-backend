@@ -285,6 +285,18 @@ class GeoIPSettings(_Base):
     trust_proxy_headers: bool = False
 
 
+class PopularSearchSettings(_Base):
+    """The popular-search pills for GET /public/chatfolio/popular."""
+
+    model_config = SettingsConfigDict(env_prefix="POPULAR_SEARCH_", env_file=".env", extra="ignore")
+
+    # A pill must match at least this many published Chatfolios — keeps pills useful and stops a
+    # niche one (e.g. "Flutter Dhaka") from effectively pointing at a single person.
+    min_profiles: int = 3
+    # Result cache per location; 0 disables caching.
+    cache_ttl_seconds: int = 60 * 60
+
+
 class FeatureFlags(_Base):
     model_config = SettingsConfigDict(env_prefix="FEATURE_", env_file=".env", extra="ignore")
 
@@ -319,6 +331,7 @@ class Settings(_Base):
     sms: SmsSettings = SmsSettings()
     support_kori: SupportKoriSettings = SupportKoriSettings()
     geoip: GeoIPSettings = GeoIPSettings()
+    popular_search: PopularSearchSettings = PopularSearchSettings()
 
 
 @lru_cache

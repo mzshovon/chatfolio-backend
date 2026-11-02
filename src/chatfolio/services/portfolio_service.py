@@ -407,12 +407,7 @@ class PublicPortfolioService:
             stmt = stmt.where(CandidateProfile.job_type == job_type)
         if field:
             stmt = stmt.where(self._text_match(f"%{field.strip()}%", fields="role"))
-        for term in (q or "").split():
-            mode = {jt.value: jt for jt in JobType}.get(term.lower())
-            if mode is not None:
-                stmt = stmt.where(CandidateProfile.job_type == mode)
-            else:
-                stmt = stmt.where(self._text_match(f"%{term}%", fields="all"))
+        stmt = self._apply_q(stmt, q)
 
         if start == "immediately":
             stmt = stmt.where(CandidateProfile.notice_period_days == 0)
@@ -444,6 +439,27 @@ class PublicPortfolioService:
         if overlap_hours:
             rows = [r for r in rows if hours_overlap(r[1].work_hours, overlap_hours)][:limit]
         return await self._build_hits(rows)
+
+    @classmethod
+    def _apply_q(cls, stmt, q: str | None):
+        for term in (q or "").split():
+            mode = {jt.value: jt for jt in JobType}.get(term.lower())
+            if mode is not None:
+                stmt = stmt.where(CandidateProfile.job_type == mode)
+            else:
+                stmt = stmt.where(cls._text_match(f"%{term}%", fields="all"))
+        return stmt
+
+    async def count_published(self, q: str) -> int:
+        """How many published Chatfolios `search_published(q=q)` would match (uncapped). Lets
+        the popular-search pills report exactly what clicking them will return."""
+        stmt = (
+            select(func.count(PublicChatfolio.id))
+            .select_from(PublicChatfolio)
+            .join(CandidateProfile, CandidateProfile.id == PublicChatfolio.profile_id)
+            .where(PublicChatfolio.is_published.is_(True))
+        )
+        return (await self._session.execute(self._apply_q(stmt, q))).scalar_one()
 
     @staticmethod
     def _text_match(pattern: str, *, fields: Literal["all", "role"]):

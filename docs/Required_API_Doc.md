@@ -559,6 +559,52 @@ Privacy: the visitor's IP is sent to the lookup provider; it is not stored in ou
 
 ---
 
+## 10. Public — Popular search pills (implemented 2026-11-02)
+
+### `GET /api/v1/public/chatfolio/popular` — no auth required, 60/min per IP
+
+The "Popular:" pills under the recruiter search box. Derived from published Chatfolios' CV
+data — skills, experience roles/title, work mode and location — and ranked **most results
+first**.
+
+```
+GET /api/v1/public/chatfolio/popular?location=Dhaka&limit=5
+```
+
+| Param | Notes |
+|---|---|
+| `location` | Optional, 2-60 chars. The viewer's city — pass `city` from `GET /public/viewer/location`. Localizes and boosts pills ("Data analyst Dhaka"); a city nobody is in just gives the global pills. |
+| `limit` | Optional, 1-5, default 5. Never more than 5 pills. |
+
+```jsonc
+// 200 OK — plain array, sorted by `count` descending
+[
+  { "label": "Backend Engineer Dhaka", "q": "Backend Engineer Dhaka", "count": 14 },
+  { "label": "React remote",           "q": "React remote",           "count": 12 },
+  { "label": "Python",                 "q": "Python",                 "count": 9 }
+]
+```
+
+- **Render `label`; on click call `GET /public/chatfolio/search?q=<q>`.** `q` is exactly
+  what the search box would send, and `count` is exactly how many results that search returns
+  (each pill is checked against the real search before it is returned).
+- **Fewer than 5 — even `[]` — is normal.** A pill is only returned when it matches at least
+  `POPULAR_SEARCH_MIN_PROFILES` (3) published Chatfolios, so the API never pads with dead pills.
+  Hide the row when the array is empty.
+- Each skill/role appears at most once, in its most specific useful form: `React` may come back
+  as `React Dhaka` or `React remote` when that variant still covers a large share of it.
+- Skills/roles are normalized first: `ReactJS`/`react.js` count as React, seniority is dropped
+  from roles ("Sr. Backend Engineer II" counts as "Backend Engineer"), and generic skills
+  ("Communication") are ignored.
+- Supply-based for now (how many published candidates have the term); ranking by recruiter
+  search demand is planned once a search log exists.
+- Cached server-side per location for `POPULAR_SEARCH_CACHE_TTL_SECONDS` (1 h), and sent with
+  `Cache-Control: public, max-age=300` — a new publish can take up to an hour to show up.
+
+**Frontend consumer**: the "Popular:" row under the search box.
+
+---
+
 ## Summary table
 
 | Section | Endpoint(s) needed | Paginated? | Frontend file |
@@ -572,3 +618,4 @@ Privacy: the visitor's IP is sent to the lookup provider; it is not stored in ou
 | Recruiter portfolio search — **done** | `GET /public/chatfolio/search`, `job_type` on `PATCH /profiles/me` | Capped at 25, no `limit`/`offset` yet | net-new recruiter search UI |
 | Google Calendar connection — **done** | `GET /meeting-settings`, `GET /meeting-settings/google/connect`, `DELETE /meeting-settings/google`, `POST /meeting-settings/meetings` (callback is browser-redirect only) | No | `/dashboard/settings` Google Calendar card |
 | Viewer location — **done** | `GET /public/viewer/location` | No | search portal location label |
+| Popular search pills — **done** | `GET /public/chatfolio/popular` | No (max 5) | search portal "Popular:" pills |

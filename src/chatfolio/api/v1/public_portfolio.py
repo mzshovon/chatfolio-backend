@@ -1,15 +1,20 @@
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import RedirectResponse
 
-from chatfolio.api.deps import PublicPortfolioServiceDep, StorageBackendDep
+from chatfolio.api.deps import (
+    PopularSearchServiceDep,
+    PublicPortfolioServiceDep,
+    StorageBackendDep,
+)
 from chatfolio.core.exceptions import (
     NotFoundError,
     ServiceUnavailableError,
     ValidationFailedError,
 )
+from chatfolio.core.rate_limit import limiter
 from chatfolio.models.chatfolio import PublicChatfolio
 from chatfolio.models.portfolio_section import SectionType
 from chatfolio.models.profile import (
@@ -26,7 +31,11 @@ from chatfolio.schemas.profile import (
     ProjectResponse,
     SkillResponse,
 )
-from chatfolio.schemas.public_portfolio import PortfolioSearchResult, PublicChatfolioResponse
+from chatfolio.schemas.public_portfolio import (
+    PopularSearchItem,
+    PortfolioSearchResult,
+    PublicChatfolioResponse,
+)
 from chatfolio.services.portfolio_service import PublicPortfolioService
 
 router = APIRouter(prefix="/public/chatfolio", tags=["public"])
@@ -134,6 +143,28 @@ async def search_public_chatfolios(
         )
         for hit in hits
     ]
+
+
+@router.get("/popular", response_model=list[PopularSearchItem], tags=["public"])
+@limiter.limit("60/minute")
+async def popular_searches(
+    request: Request,
+    response: Response,
+    service: PopularSearchServiceDep,
+    limit: int = Query(default=5, ge=1, le=5, description="Max pills (never more than 5)."),
+    location: str | None = Query(
+        default=None,
+        min_length=2,
+        max_length=60,
+        description="Viewer's city (from GET /public/viewer/location). Boosts and localizes "
+        "pills, e.g. 'Data analyst Dhaka'.",
+    ),
+) -> list[PopularSearchItem]:
+    """Pills for the search box, most results first. Every `q` can be passed straight to
+    `GET /public/chatfolio/search` and is guaranteed at least a few results, so fewer than
+    `limit` (even none) are returned when that few candidates qualify — hide the row then."""
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return await service.popular(limit=limit, location=location)
 
 
 @router.get("/{slug}", response_model=None)

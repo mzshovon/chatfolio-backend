@@ -46,3 +46,9 @@ class PortfolioSearchResult(BaseModel):
     notice_period_days: int | None  # 0 means immediately
     top_skills: list[str]  # up to 5
     work_hours: WorkHours | None
+
+
+class PopularSearchItem(BaseModel):
+    label: str  # text shown on the pill
+    q: str  # pass straight to GET /public/chatfolio/search?q=
+    count: int  # published Chatfolios that search returns for `q`

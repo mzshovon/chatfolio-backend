@@ -30,6 +30,7 @@ from chatfolio.services.billing_settings_service import BillingSettingsService
 from chatfolio.services.entitlement_guard import EntitlementGuard
 from chatfolio.services.entitlement_service import EntitlementService
 from chatfolio.services.geolocation_service import GeoLocationService
+from chatfolio.services.popular_search_service import PopularSearchService
 from chatfolio.services.portfolio_service import PortfolioService, PublicPortfolioService
 from chatfolio.services.pricing_service import PricingService
 from chatfolio.services.profile_service import ProfileService
@@ -96,6 +97,15 @@ def get_public_portfolio_service(
 PublicPortfolioServiceDep = Annotated[
     PublicPortfolioService, Depends(get_public_portfolio_service)
 ]
+
+
+def get_popular_search_service(
+    session: DbSessionDep, portfolio: PublicPortfolioServiceDep, settings: SettingsDep
+) -> PopularSearchService:
+    return PopularSearchService(session, portfolio, get_redis(), settings.popular_search)
+
+
+PopularSearchServiceDep = Annotated[PopularSearchService, Depends(get_popular_search_service)]
 
 
 def get_activation_strategies(settings: SettingsDep) -> dict[StrategyName, ActivationStrategy]:

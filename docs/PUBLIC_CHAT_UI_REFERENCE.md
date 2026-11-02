@@ -115,6 +115,7 @@ published Chatfolios.
 
 | Param | Match type | Example |
 |---|---|---|
+| `q` | Free text, e.g. `React developer remote` or `Python Dhaka`. Whitespace-separated terms are ANDed; each must match the slug, name, title, bio, location, an experience role or a skill (case-insensitive). The words `remote` / `hybrid` / `onsite` set the work mode instead. This is what the search box and the "Popular" pills send | `?q=react remote` |
 | `username` | Case-insensitive partial match on the slug | `?username=ada` |
 | `location` | Case-insensitive partial match on the candidate's location | `?location=london` |
 | `job_type` | Exact match, one of `remote` \| `onsite` \| `hybrid` | `?job_type=remote` |
@@ -136,6 +137,43 @@ published Chatfolios.
 - Results are ordered most-recently-published first, capped at 25 — there's no `limit`/`offset`
   yet, so don't build pagination controls against this endpoint until that's added.
 - An empty array is a normal "no matches" response, not an error — don't treat `[]` as a `404`.
+
+### `GET /api/v1/public/chatfolio/popular`
+
+The "Popular:" pills under the search box (up to 5), ranked **most results first**. Derived from
+published candidates' CVs (skills, experience roles/title, work mode, location). Call it on
+page load, optionally right after `GET /api/v1/public/viewer/location`.
+
+| Param | Notes | Example |
+|---|---|---|
+| `location` | Optional, 2-60 chars. The viewer's city — pass `city` from `GET /public/viewer/location`. Localizes and boosts pills; a city nobody is in just returns the global pills | `?location=Dhaka` |
+| `limit` | Optional, 1-5, default 5. Never more than 5 | `?limit=3` |
+
+```jsonc
+// GET /api/v1/public/chatfolio/popular?location=Dhaka
+// 200 OK — plain array, sorted by count descending
+[
+  { "label": "Backend Engineer Dhaka", "q": "Backend Engineer Dhaka", "count": 14 },
+  { "label": "React remote",           "q": "React remote",           "count": 12 },
+  { "label": "Python",                 "q": "Python",                 "count": 9 }
+]
+```
+
+**Notes for the UI:**
+- Show `label` on the pill. On click, put `q` in the search box and call
+  `GET /api/v1/public/chatfolio/search?q=<q>` — `q` is already in exactly the form search expects.
+- `count` is exactly how many results that search returns, so it's safe to show on the pill
+  (e.g. a badge or tooltip) or to omit.
+- Every pill is guaranteed to have results: a pill is only returned when it matches at least 3
+  published Chatfolios.
+- **Fewer than 5 — including `[]` — is a normal response**, not an error and not padded with
+  placeholder pills. Render only what's returned and hide the whole "Popular:" row when the array
+  is empty.
+- Don't hardcode a fallback pill list on the frontend; a hardcoded pill may lead to an empty
+  results page.
+- Results are cached server-side for about an hour, so a newly published candidate may not move
+  the pills immediately. The response is also sent with `Cache-Control: public, max-age=300`.
+- Rate limit: 60 requests/min per IP — fetch once per page load, not per keystroke.
 
 ### `GET /api/v1/public/chatfolio/{slug}/cv`
 
